@@ -1,5 +1,5 @@
-# setup.ps1 — CashFrenzy_collect 部署（自动检测，无 DSH 依赖）
-# 作用：检测 Python/venv、adb(蓝叠)、研究实例与 Cash Frenzy 包、
+# setup.ps1 — CF_collect 部署（自动检测，无 DSH 依赖）
+# 作用：检测 Python/venv、adb(蓝叠)、研究实例与【游戏】包、
 #       下载/定位 Frida 17.17.0 二进制、检查 root，输出 ready 摘要。
 param(
   [string]$ProjectRoot = (Split-Path -Parent $MyInvocation.MyCommand.Path)
@@ -51,7 +51,7 @@ if ($adb) {
   $state = (& $adb -s $serial get-state 2>&1).Trim()
   if ($state -eq "device") { Ok "device online: $serial" } else { Warn "device not online: $serial ($state)" }
   $pkg = (& $adb -s $serial shell "pm path $($config.package)" 2>&1)
-  if ($pkg -match "base.apk") { Ok "package installed: $($config.package)" } else { Warn "package NOT found: $($config.package) — install Cash Frenzy on the instance" }
+  if ($pkg -match "base.apk") { Ok "package installed: $($config.package)" } else { Warn "package NOT found: $($config.package) — install 【游戏】 on the instance" }
   $su = (& $adb -s $serial shell "$($config.root_launcher) -c id" 2>&1) -join " "
   if ($su -match "uid=0") { Ok "root active; will inject Gadget" } else { Warn "root NOT active. Enable root on the research instance (see docs/ROOT_TOGGLE.md) before running." }
 }
@@ -64,9 +64,7 @@ $gadgetLocal = if ($cfgFridaGadget) { $cfgFridaGadget } else { Join-Path $binDir
 $baseUrl = "https://github.com/frida/frida/releases/download/17.17.0"
 if (-not (Test-Path $serverLocal)) {
   Warn "frida-server missing; attempting download to $serverLocal"
-  curl.exe -sL -o $serverLocal "$baseUrl/frida-server-17.17.0-android-x86_64.xz" --max-time 120
-  & $venvPy -c "import lzma; lzma.open(r'$serverLocal.xz')" 2>$null # placeholder; xz handled below
-  # decode .xz via python lzma
+  curl.exe -sL -o "$serverLocal.xz" "$baseUrl/frida-server-17.17.0-android-x86_64.xz" --max-time 120
   & $venvPy -c "import lzma,shutil; shutil.copyfileobj(lzma.open(r'$serverLocal.xz'), open(r'$serverLocal','wb'))"
   Remove-Item "$serverLocal.xz" -ErrorAction SilentlyContinue
   if (Test-Path $serverLocal) { Ok "frida-server downloaded" } else { Warn "frida-server download failed; place binary manually into bin/" }

@@ -1,8 +1,8 @@
-# cf_bootstrap_gadget.py — Cash Frenzy Houdini namespace Gadget 加载
+# cf_bootstrap_gadget.py — 【游戏】 Houdini namespace Gadget 加载
 # 改编自 Huuuge `bootstrap_houdini_gadget.py`（D:\huuuge-research\artifacts\live_probe\），
 # 仅替换 package / target module / gadget 路径。逻辑与已验证的 Android 9 路径一致。
 #
-# 作用：冷启动 Cash Frenzy，在 libnativebridge.so 加载目标 arm64 模块
+# 作用：冷启动【游戏】，在 libnativebridge.so 加载目标 arm64 模块
 # （libcocos2dlua.so）时，把 arm64 Frida Gadget 加载进同一 native-bridge namespace，
 # 使 outer x86_64 frida 视角下也能观察 arm64 进程内的 Lua dispatch。
 #
@@ -21,7 +21,7 @@ import frida
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Load an ARM64 Frida Gadget through BlueStacks Houdini "
-                    "using the Cash Frenzy app namespace (Android 9)."
+                    "using the target app namespace (Android 9)."
     )
     parser.add_argument('--device-id', required=True, default='127.0.0.1:5585')
     parser.add_argument('--package', default='slots.pcg.casino.games.free.android')

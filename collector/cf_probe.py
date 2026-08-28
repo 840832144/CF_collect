@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-# cf_probe.py — Cash Frenzy scoped inbound 只读探针 + batch_spin 提取 + 会话清单
+# cf_probe.py — 【游戏】 scoped inbound 只读探针 + Collector 1.0 event pipeline
 # 改编自 TASK-0024 `task0024_inbound_probe.py`（D:\AI-Workspace\reviews\cash-frenzy\tools\），
 # 序列化预算（depth 4 / 64 元素 / 64KiB / 32 pcalls / 2KiB string）原样保留，不做任何放宽。
-# 新增：batch_spin direct 字段提取 -> spin_records.jsonl；会话清单 -> session_manifest.json。
+# Android 9 Hook/serializer 保持 TASK-0024 已验证路线；主机侧只新增 Adapter Registry 与固定产物。
 #
 # 铁律：hook 只读；仅 inbound dispatch 线程 scope 内激活；超限截断；不碰 signer/encryptor。
 #
@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
+import os
 import signal
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,7 +22,12 @@ from typing import Any
 
 import frida
 
-SAFE_CMD = re.compile(r"^[A-Za-z_][A-Za-z0-9_.:/-]{0,127}$")
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from adapters.registry import adapt_record
+from collector.session_artifacts import SessionArtifacts
 
 MAX_DEPTH = 4
 MAX_ELEMENTS = 64
@@ -32,19 +38,6 @@ PACKAGE = "slots.pcg.casino.games.free.android"
 APP_VERSION = "4.78 / 478"
 INSTANCE = "Pie64_3 / AppResearch2"
 ADB_SERIAL = "127.0.0.1:5585"
-
-# batch_spin direct 结果字段（TASK-0024 5/5 复现确认），路径在 arg[2].[2].list.[1] 之下
-SPIN_DIRECT_FIELDS = {
-    "base_win", "bonus_base_win", "total_win", "coins",
-    "win_lines", "win_pos_list", "feature", "result",
-}
-# spin 结果的判据：至少出现一个"赢"字段（仅 coins 的余额更新不算 spin）
-WIN_SIGNATURE = {"base_win", "bonus_base_win", "total_win", "win_lines", "win_pos_list"}
-# 数值型直采字段（写 spin_records.jsonl 时取值）
-SPIN_VALUE_FIELDS = {"base_win", "bonus_base_win", "total_win", "coins"}
-# 表型直采字段（写 spin_records.jsonl 时记元素数）
-SPIN_TABLE_FIELDS = {"win_lines", "win_pos_list"}
-
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -342,95 +335,18 @@ def build_javascript(mode: str, max_depth: int = MAX_DEPTH) -> str:
     return source
 
 
-# ---------- batch_spin 提取（Python 侧，纯读） ----------
-
-def table_field(node: Any, key: str) -> Any:
-    """在探针序列化后的 table 节点中按 key 取值（key 形如 '[1]' 或 'list'）。"""
-    if not isinstance(node, dict) or node.get("type") != "table":
-        return None
-    for field in node.get("fields", []):
-        if isinstance(field, dict) and field.get("key") == key:
-            return field.get("value")
-    return None
-
-
-def walk_direct_fields(node: Any, path: str, out: dict[str, Any]) -> None:
-    """收集 arg[2].[2] 之下的 direct 字段（按字段名，含 list 索引链）。"""
-    if not isinstance(node, dict):
-        return
-    if node.get("type") == "table":
-        for field in node.get("fields", []):
-            if not isinstance(field, dict):
-                continue
-            key = str(field.get("key", ""))
-            child_path = f"{path}.{key}" if path else key
-            walk_direct_fields(field.get("value"), child_path, out)
-        return
-    last = path.rsplit(".", 1)[-1] if path else ""
-    if last in SPIN_DIRECT_FIELDS:
-        if node.get("type") == "number":
-            out[last] = node.get("value")
-        elif node.get("type") == "string":
-            out[last] = node.get("value")
-        elif node.get("type") == "table":
-            out[last] = {"element_count": len(node.get("fields", []))}
-        else:
-            out[last] = {"type": node.get("type")}
-
-
-def extract_spin(record: dict[str, Any]) -> dict[str, Any] | None:
-    """从 lua-pcall-args 事件提取 spin 直采字段。
-
-    触发条件：任意参数下出现 SPIN_DIRECT_FIELDS 中的结果字段（base_win/total_win/coins/...），
-    不绑定具体命令名（不同机台/版本命令名可能不同，如 batch_spin / BATCH_SPIN / 其它）。
-    command 若可安全读取则一并记录。
-    """
-    direct: dict[str, Any] = {}
-    command = None
-    for argument in record.get("arguments", []):
-        if not isinstance(argument, dict):
-            continue
-        idx = argument.get("index")
-        val = argument.get("value")
-        if idx == 1:
-            cn = table_field(val, "[1]")
-            if isinstance(cn, dict) and cn.get("type") == "string":
-                cval = cn.get("value")
-                if isinstance(cval, str) and SAFE_CMD.fullmatch(cval):
-                    command = cval
-        walk_direct_fields(val, f"arg[{idx}]", direct)
-    if not direct:
-        return None
-    # 必须有赢字段才算一次 spin 结果；仅 coins（余额更新）不算
-    if not (set(direct) & WIN_SIGNATURE):
-        return None
-    rec: dict[str, Any] = {
-        "seq": record.get("seq"),
-        "captured_at": record.get("captured_at"),
-        "scope_id": record.get("scopeId"),
-    }
-    if command:
-        rec["command"] = command
-    for name in SPIN_VALUE_FIELDS:
-        if name in direct:
-            rec[name] = direct[name]
-    for name in SPIN_TABLE_FIELDS:
-        if name in direct and isinstance(direct[name], dict):
-            rec[name + "_count"] = direct[name].get("element_count")
-    for name in ("feature", "result"):
-        if name in direct:
-            rec[name] = direct[name]
-    return rec
-
-
 # ---------- 主流程 ----------
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Cash Frenzy scoped inbound probe (read-only)")
+    parser = argparse.ArgumentParser(description="【游戏】 scoped inbound probe (read-only)")
     parser.add_argument("--session-dir", required=True)
     parser.add_argument("--endpoint", default="127.0.0.1:27043")
     parser.add_argument("--duration", type=int, default=600)
     parser.add_argument("--mode", choices=("stability", "lua"), default="lua")
+    parser.add_argument("--package", default=PACKAGE)
+    parser.add_argument("--app-version", default=os.environ.get("CF_APP_VERSION", APP_VERSION))
+    parser.add_argument("--instance", default=INSTANCE)
+    parser.add_argument("--adb-serial", default=ADB_SERIAL)
     parser.add_argument("--max-depth", type=int, default=MAX_DEPTH,
                         help="Lua table serialization depth limit (default %d). "
                              "Increase to ~6-7 to fully reproduce deep spin-result/"
@@ -438,30 +354,37 @@ def main() -> None:
     args = parser.parse_args()
 
     session_dir = Path(args.session_dir)
-    session_dir.mkdir(parents=True, exist_ok=False)
-    events_path = session_dir / "events.jsonl"
-    spin_path = session_dir / "spin_records.jsonl"
+    artifacts = SessionArtifacts(session_dir)
+    artifacts.prepare_new()
     state_path = session_dir / "state.json"
-    manifest_path = session_dir / "session_manifest.json"
     stop_path = session_dir / "STOP"
-    counts = {"events": 0, "lua_pcall_args": 0, "scope_summaries": 0,
-              "batch_spin": 0, "errors": 0}
+    counts = {
+        "source_events": 0,
+        "events": 0,
+        "lua_pcall_args": 0,
+        "scope_summaries": 0,
+        "batch_spin": 0,
+        "keepalive": 0,
+        "adapter_skipped": 0,
+        "errors": 0,
+    }
     stopping = False
     finishing = False
     detached: dict[str, Any] | None = None
     start_utc = utc_now()
+    limits = {
+        "max_depth": args.max_depth,
+        "max_elements": MAX_ELEMENTS,
+        "max_message_bytes": MAX_MESSAGE_BYTES,
+        "max_string_bytes": MAX_STRING_BYTES,
+        "max_pcalls_per_scope": MAX_PCALLS_PER_SCOPE,
+    }
 
     def persist(status: str) -> None:
         state = {
             "status": status,
             "mode": args.mode,
-            "limits": {
-                "max_depth": args.max_depth,
-                "max_elements": MAX_ELEMENTS,
-                "max_message_bytes": MAX_MESSAGE_BYTES,
-                "max_string_bytes": MAX_STRING_BYTES,
-                "max_pcalls_per_scope": MAX_PCALLS_PER_SCOPE,
-            },
+            "limits": limits,
             "counts": counts,
             "detached": detached,
         }
@@ -469,21 +392,32 @@ def main() -> None:
 
     def record(payload: dict[str, Any]) -> None:
         item = bounded_record({"captured_at": utc_now(), **payload})
-        with events_path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(item, ensure_ascii=False, separators=(",", ":")) + "\n")
-        counts["events"] += 1
+        source_event_index = counts["source_events"]
+        artifacts.append_source(item)
+        counts["source_events"] += 1
         kind = item.get("kind")
         if kind == "lua-pcall-args":
             counts["lua_pcall_args"] += 1
-            spin = extract_spin(item)
-            if spin is not None:
-                counts["batch_spin"] += 1
-                with spin_path.open("a", encoding="utf-8") as handle:
-                    handle.write(json.dumps(spin, ensure_ascii=False, separators=(",", ":")) + "\n")
         elif kind == "inbound-scope-summary":
             counts["scope_summaries"] += 1
         elif kind in {"probe-error", "probe-truncated", "host-truncated"}:
             counts["errors"] += 1
+
+        event = adapt_record(item, source_event_index, counts["events"])
+        if event is None:
+            return
+        artifacts.append_event(event)
+        counts["events"] += 1
+        adapter_name = event["adapter"]["name"]
+        status = event["payload"]["status"]
+        if status != "ok":
+            counts["adapter_skipped"] += 1
+            return
+        if adapter_name == "batch_spin":
+            counts["batch_spin"] += 1
+            artifacts.append_spin(event)
+        elif adapter_name == "keepalive":
+            counts["keepalive"] += 1
 
     def on_message(message: dict[str, Any], data: bytes | None) -> None:
         if message.get("type") == "send" and isinstance(message.get("payload"), dict):
@@ -534,21 +468,21 @@ def main() -> None:
             pass
         final_status = "detached" if detached else "stopped"
         persist(final_status)
-        manifest = {
-            "schema_version": 1,
-            "session_id": session_dir.name,
-            "package": PACKAGE,
-            "app_version": APP_VERSION,
-            "instance": INSTANCE,
-            "adb_serial": ADB_SERIAL,
-            "mode": args.mode,
-            "start_utc": start_utc,
-            "end_utc": utc_now(),
-            "counts": counts,
-            "final_status": final_status,
-        }
-        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
-                                 encoding="utf-8")
+        artifacts.write_manifest(
+            session_id=session_dir.name,
+            runtime={
+                "package": args.package,
+                "app_version": args.app_version,
+                "instance": args.instance,
+                "adb_serial": args.adb_serial,
+            },
+            mode=args.mode,
+            limits=limits,
+            start_utc=start_utc,
+            end_utc=utc_now(),
+            counts=counts,
+            final_status=final_status,
+        )
         print(f"STOPPED status={final_status} counts={counts}", flush=True)
 
 

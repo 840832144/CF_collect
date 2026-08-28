@@ -1,9 +1,9 @@
-# run_collector.ps1 — CashFrenzy_collect 一键采集（config 驱动，无 DSH 依赖）
-# 前置：已运行 setup.ps1；研究实例 root 已开；Cash Frenzy 可游玩。
+# run_collector.ps1 — CF_collect 一键采集（config 驱动，无 DSH 依赖）
+# 前置：已运行 setup.ps1；研究实例 root 已开；【游戏】可游玩。
 # 流程：预检 -> frida-server -> gadget+config -> forward -> bootstrap -> 探针 READY
 #       ->（玩家正常游玩）-> STOP -> 提取 -> 汇总 -> 强制清理
 param(
-  [string]$ProjectRoot = (Split-Path -Parent $PSScriptRoot),
+  [string]$ProjectRoot = $PSScriptRoot,
   [int]$DurationSeconds = 0     # 0 表示用 config.json 的 session_duration_seconds
 )
 $ErrorActionPreference = "Stop"
@@ -19,6 +19,8 @@ $pkg = $config.package
 $gadgetPort = $config.gadget_port
 $rootLauncher = $config.root_launcher
 $maxDepth = $config.max_depth
+$env:PYTHONPATH = $project
+$env:CF_APP_VERSION = [string]$config.app_version
 
 # 定位 adb
 function Adb {
@@ -62,7 +64,7 @@ New-Item -ItemType Directory -Force -Path $sessionDir | Out-Null
 Ok "session dir: $sessionDir"
 
 Step "1. Start renamed frida-server"
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scriptDir "cf_start_frida_server.ps1") -ServerPath $serverLocal -Serial $serial -AdbPath $adb | Out-Host
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scriptDir "cf_start_frida_server.ps1") -ServerPath $serverLocal -Serial $serial -AdbPath $adb -PythonPath $venvPy | Out-Host
 $cleanup.Add("shell rm -f /data/local/tmp/cf_rt_mon /data/local/tmp/cf_rt_mon.log")
 
 Step "2. Stage gadget + config into game namespace"
@@ -92,7 +94,10 @@ $probe = Start-Process -FilePath $venvPy -ArgumentList @(
   "--endpoint", "127.0.0.1:$gadgetPort",
   "--duration", "$DurationSeconds",
   "--mode", "lua",
-  "--max-depth", "$maxDepth"
+  "--max-depth", "$maxDepth",
+  "--package", "$pkg",
+  "--instance", "$($config.instance)",
+  "--adb-serial", "$serial"
 ) -RedirectStandardOutput $probeLog -RedirectStandardError $probeErr -PassThru -NoNewWindow
 $cleanup.Add("kill-process:$($probe.Id)")
 $ready = $false
@@ -108,7 +113,7 @@ for ($i=0; $i -lt 60; $i++) {
 if (-not $ready) { Get-Content $probeErr -ErrorAction SilentlyContinue | Select-Object -Last 20; throw "probe not READY" }
 
 Step "6. PLAYER PHASE"
-Write-Host "`n采集已就绪！请玩家以拟人节奏正常游玩（建议 >=20 次 Spin，含 auto/respin 更好）。" -ForegroundColor Yellow
+Write-Host "`n采集已就绪！请玩家按本次授权手动执行普通 Spin；采集器不会自动操作游戏。" -ForegroundColor Yellow
 Write-Host "完成够样本后，在另一个终端执行：  New-Item -ItemType File -Path '$sessionDir\STOP' -Force"
 Write-Host "或等待 $DurationSeconds 秒自动结束。`n"
 $stopPath = Join-Path $sessionDir "STOP"
@@ -117,9 +122,9 @@ if (-not $probe.HasExited) { New-Item -ItemType File -Path $stopPath -Force | Ou
 Ok "probe stopped"
 
 Step "7. Extract + summarize"
-$env:PYTHONPATH = $scriptDir
+$env:PYTHONPATH = $project
 & $venvPy (Join-Path $scriptDir "cf_rextract.py") $sessionDir | Out-Host
-& $venvPy (Join-Path $scriptDir "cf_summarize.py") (Join-Path $sessionDir "events.jsonl") --output (Join-Path $sessionDir "summary.json") --spin-records (Join-Path $sessionDir "spin_records.jsonl") | Out-Host
+& $venvPy (Join-Path $scriptDir "cf_summarize.py") (Join-Path $sessionDir "events.jsonl") --output (Join-Path $sessionDir "summary.json") --markdown (Join-Path $sessionDir "summary.md") --spin-records (Join-Path $sessionDir "spin_records.jsonl") | Out-Host
 Write-Host "`n---- summary ----" -ForegroundColor Cyan
 Get-Content (Join-Path $sessionDir "summary.json") -Raw
 

@@ -1,6 +1,6 @@
 # 隐身 / 防封清单（注入隐身 + 行为像人 + 账号隔离）
 
-> Cash Frenzy 防护特征：APK v3 签名、`libsigner.so`/`libEncryptorP.so`/XXTEA 加密链、
+> 【游戏】已知技术特征：APK v3 签名、`libsigner.so`/`libEncryptorP.so`/XXTEA 加密链、
 > 遥测（libapminsight/volc_log/applovin 崩溃上报）。
 > **我们的采集点在明文 Lua 层，不需要碰任何加密/签名链。**
 
@@ -13,9 +13,9 @@
 - [ ] 不 hook `libsigner`/`libEncryptorP`/XXTEA/SSL；无 Stalker、无全局 Lua 日志
 - [ ] 每次会话前 120s 无操作稳定性 Gate（Gadget 加载稳定性，TASK-0024 标准）
 
-## B. 行为像人
-- [ ] Spin 玩家手动（可 auto，但别 24h 连跑）；拟人节奏、随机停顿
-- [ ] 单会话 ≤ 15–30 分钟；会话间自然间隔；下注档位随游玩变化
+## B. 游戏内操作
+- [ ] Spin 只由 User 按本次授权手动执行；禁止自动点击、Auto Spin 或挂机
+- [ ] 达到本次验证目标后立即停止，不为增加样本无界延长 Session
 - [ ] 遇升级/活动弹窗正常点掉，不异常速刷
 
 ## C. 账号与网络

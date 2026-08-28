@@ -1,97 +1,113 @@
-# CashFrenzy_collect
+# CF_collect
 
-对 **Cash Frenzy™ — Casino Slots**（Android）做**被动、只读**游戏数据采集与结构化解码的工具。
-目标是拿到老虎机的结构化玩法数据：**每笔下注 → 停轮(wins) → base/bonus/total 赢分 → 余额(coins) → 彩金(respin/免费游戏)**，
-用于游戏体验/策划分析。**只观察、复制、解析，绝不修改请求、返回值、余额或服务器状态。**
+这是面向 Android 9 研究实例的【游戏】被动、只读数据采集器。Collector 1.0 把已验证的 inbound-scoped Lua source records 转换为固定 Adapter Event 和 Session artifacts，用于本地复现与策划分析。
 
-> 底层只依赖 Windows 上常见的 **BlueStacks 5 + adb + Python + Frida**，**不依赖任何特定 AI 工具 / 特殊宿主**。
-> 任何人按本文档在一台普通 Windows 机器上即可部署运行。
+工具只观察应用已经解码的数据，不修改请求、返回值、余额、奖励、内存或服务器状态。Android package、Lua command 和 native module 等运行所需技术标识保持真实名称；公开介绍统一使用“【游戏】”。
 
-## 它采集什么（一次会话输出）
+## Collector 1.0 边界
 
-| 数据 | 来源 | 说明 |
-|---|---|---|
-| `batch_spin` 结果 | 入站 Lua `lua_pcall` 参数 | `base_win / bonus_base_win / total_win / coins / win_lines / win_pos_list`（含 sub-list 明细） |
-| 直接余额 | `keepalive.coins` + `batch_spin.coins` | 服务器下发的真实余额（非推导） |
-| 下注信息 | `bet_per_line / max_bet_multiplier / avg_bet / lounge_min_bet` | 下注档位与上下限 |
-| 彩金奖池 | `jp_data` + `new_broadcast_jackpot.bet` | minor/mini/grand/major |
-| 特殊玩法 | `free_game.base_win` | respin / 免费游戏触发 |
+- Android 9 `onUIThreadReceiveMessage` scope + `lua_pcall` 采集路线保持不变；
+- 只注册 `batch_spin` 与 `keepalive` 两个 Adapter，未知命令 fail closed；
+- `batch_spin` 固定六字段：`base_win / bonus_base_win / total_win / coins / win_lines / win_pos_list`；
+- 不发现同对象额外字段，不扩 schema，不做 20-Spin/F4；
+- Raw、逐笔值、完整响应、账号和绝对余额只保存在本地 Session，Git 不接收真实 Session。
 
-产出目录：
+## 架构
+
+```text
+Android 9 scoped probe
+        │
+        ▼
+source_events.jsonl
+        │
+        ▼
+adapters/registry.py
+   ├─ batch_spin.py
+   └─ keepalive.py
+        │
+        ├─ events.jsonl
+        └─ spin_records.jsonl
 ```
+
+所有 normalized Event 顶层严格固定为：
+
+```json
+{
+  "event": {},
+  "adapter": {},
+  "source": {},
+  "payload": {}
+}
+```
+
+`payload.fields` 只包含对应 Adapter 的 allowlist；类型变化、缺字段和截断通过 `warnings` 显式记录。
+
+## Session 输出
+
+```text
 data/sessions/<session_id>/
-├── events.jsonl        原始序列化事件（深度受限，含结构摘要）
-├── spin_records.jsonl  精简的 spin 记录（数值）
-├── summary.json        脱敏结构摘要（不含绝对数值，可入 Git）
-└── session_manifest.json  会话信息
+├── session_manifest.json  schema、runtime identity、artifact map、计数与最终状态
+├── source_events.jsonl    scoped source records（本机）
+├── events.jsonl           统一 Adapter Event（本机）
+├── spin_records.jsonl     有效 batch_spin Event 子集（本机）
+├── summary.json           不含逐笔值的聚合摘要
+└── summary.md             同一摘要的可读版
 ```
+
+旧 Session 只有 raw `events.jsonl` 时，`cf_rextract.py` 会只读该文件，并把 normalized Event 写到 `normalized_events.jsonl`，不会覆盖旧 Raw。
 
 ## 前置条件
 
-1. **Windows** + **BlueStacks 5 China**（或任一支持 arm64 native bridge 的 Pie/Android 9 实例）
-2. **Cash Frenzy**（`slots.pcg.casino.games.free.android`）安装在**研究实例**上，能正常游玩
-3. **Python 3.10+** 和 **PowerShell 5.1+**
-4. 研究实例的**临时 root**（用于把 Frida gadget 注入游戏进程；见 `docs/ROOT_TOGGLE.md`，含备份/回滚，不影响日常实例）
-5. **Frida 17.17.0** 两个二进制（`setup.ps1` 可自动下载到 `./bin/`）：
-   - `frida-server-17.17.0-android-x86_64`（x86_64 宿主力）
-   - `frida-gadget-17.17.0-android-arm64.so`（arm64 游戏侧）
+1. Windows 10/11、PowerShell 5.1+、Python 3.10+；
+2. BlueStacks 5 的专用 Pie / Android 9 研究实例；
+3. 【游戏】已安装，技术 package 为 `slots.pcg.casino.games.free.android`；
+4. 研究实例临时 Root，按 [Root 开关说明](docs/ROOT_TOGGLE.md) 备份和回滚；
+5. Frida 17.17.0 host/server/gadget 版本一致。
 
-> **为什么需要 root？** BlueStacks 本体是 x86_64 而游戏核心是 arm64（经 Houdini 转译）。
-> 只有在研究实例开启 root，才能把 arm64 Gadget 加载进游戏自己的 native-bridge 命名空间，
-> 从而在**明文层**观察到已解码的 Lua 数据结构——**不需要碰 `libsigner`/`libEncryptorP`/XXTEA 加密链**。
+不要修改或复用日常 BlueStacks 实例做 Root/Frida 实验。
 
 ## 快速开始
 
 ```powershell
-# 1) 部署（检测 adb/蓝叠、建 venv、下载/定位 Frida 二进制、校验设备）
+# 一次性部署
 powershell -ExecutionPolicy Bypass -File setup.ps1
 
-# 2) 采集（一键：部署 gadget → 探针 READY → 玩家正常游玩 → 自动停止 + 提取）
+# 一键运行：preflight → server → gadget → bootstrap → probe READY
+#          → User 手动操作 → stop → re-extract → summary → cleanup
 powershell -ExecutionPolicy Bypass -File run_collector.ps1
 ```
 
-`run_collector.ps1` 会：
-1. 预检（设备在线、包已装、root 已开）
-2. 推送并启动改名 frida-server（会话后删除）
-3. 把 gadget + config 部署到游戏 `lib/arm64` 命名空间
-4. 冷启动游戏、注入 Gadget、探针 READY
-5. **提醒你正常游玩**（建议 ≥20 次拟人节奏 Spin，含 auto/respin 更好）
-6. 停止 → `cf_rextract.py` + `cf_summarize.py` 出数据与脱敏摘要
-7. 强制清理（gadget/server/forward/进程），不残留
+Probe READY 后只按本次明确授权由 User 手动执行普通 Spin。采集器不会自动点击、Auto Spin、购买、充值或挂机。完成后在提示的 Session 目录创建 `STOP` 文件，或等待配置的时限结束。
 
-### 手动分步（排障用）
+手动排障入口保持可用：
 
 ```powershell
-# 用已装好的 Frida 自己一步步来，日志更清楚
-powershell -File collector/cf_start_frida_server.ps1 -ServerPath <frida-server> -Serial 127.0.0.1:5585
-adb -s 127.0.0.1:5585 forward tcp:27043 tcp:27043
-python collector/cf_bootstrap_gadget.py --device-id 127.0.0.1:5585 --gadget-path <app lib/arm64/libcash-gadget.so>
-python collector/cf_probe.py --session-dir data/sessions/<id> --endpoint 127.0.0.1:27043 --duration 2400 --max-depth 7
+powershell -File collector/cf_start_frida_server.ps1 -ServerPath <frida-server> -Serial <adb-serial>
+python collector/cf_bootstrap_gadget.py --device-id <adb-serial> --gadget-path <app-lib-path>
+python collector/cf_probe.py --session-dir data/sessions/<id> --endpoint 127.0.0.1:27043 --duration 600 --mode lua
+python collector/cf_rextract.py data/sessions/<id>
+python collector/cf_summarize.py data/sessions/<id>/events.jsonl --output data/sessions/<id>/summary.json --markdown data/sessions/<id>/summary.md
 ```
 
 ## 配置
 
-所有参数在 `config.json`：
-- `adb_serial` / `instance` / `package` / `app_version`：环境标识
-- `gadget_port`：默认 `27043`（listen）
-- `frida_version`：必须 `17.17.0`（host/server/gadget 三者一致）
-- `max_depth`：默认 `7`（深度 7 才能完整还原嵌套结果；低于此会被截断）
-- `bin.frida_server` / `bin.frida_gadget`：留空则 `setup.ps1` 自动下载到 `./bin/`
+`config.json` 保存 `adb_serial / instance / package / app_version / gadget_port / frida_version / max_depth / session_duration_seconds` 以及可选二进制路径。实例和版本必须以当前研究环境现场值为准。
 
-## 数据边界 & 安全（务必阅读）
+## 离线回归
 
-- 这是**客户端可见**的数据，不等同于完整游戏数学（部分逻辑可能依赖 Lua/native/资源配置）。
-- **逐笔绝对值（coins/win/bet）只存本机**；Git 只提交 `summary.json` 等脱敏摘要。
-- 不 hook `libsigner`/`libEncryptorP`/XXTEA；不从 APK 重打包（保持 v3 签名完整）。
-- 会话过程：临时工具用后即删、root 会话后回滚、账号/实例/IP 隔离。详见 `docs/STEALTH.md`。
+```powershell
+py -m compileall -q adapters collector tests
+py -m unittest discover -s tests -v
+```
 
-## 已知限制
+测试全部使用代码内合成 records，不依赖 `.local/`、真实 Session、fixture 或模拟器。
 
-- 偶发**升级/活动弹窗会打断下注**（游戏自身行为，正常）；采集器照常记录其余事件。
-- 超大的彩金/奖池 payload 可能触发单消息 64KiB 预算被截断（不影响 spin 主字段，`summary.json` 会标注 `message-budget`）。
-- 1 个实例同时只跑 1 个采集会话；如需多开按实例隔离。
+## 安全与停止边界
 
-## 参考
+- Hook 只在 inbound dispatch thread/scope 内激活；无全局 Lua API 日志、Stalker 或 signer/encryptor/XXTEA 路线；
+- 不重打包 APK，不修改请求/返回/余额/奖励，不伪造或重放业务消息；
+- Gadget、server、forward、进程和临时 Root 在 Session 后清理/回滚；
+- 若需要恢复新字段、扩大 schema、进入新协议层或修改 Android 9 路线，停止并另走 Review/Task；
+- `.local/`、`data/`、JSONL、APK、SO、日志和真实 Session 均不进入 Git。
 
-- 逆向基线：TASK-0022 可行性审计 / TASK-0024 入站结构化采集 Spike（本仓库 docs 摘要）
-- 协议：`BLSocket`（UDP）+ Cocos2d-x + LuaJIT，明文在 Lua dispatch 层
+更多说明见 [部署指南](docs/DEPLOYMENT.md)、[Root 开关](docs/ROOT_TOGGLE.md) 与 [安全清单](docs/STEALTH.md)。

@@ -15,5 +15,6 @@ bin/*.so
 *.log
 
 # 敏感 / 本机
+.local/
 *.backup
 *.bak*

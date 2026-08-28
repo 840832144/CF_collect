@@ -12,6 +12,7 @@ param(
   [string]$Serial = "127.0.0.1:5585",
   [string]$RemotePath = "/data/local/tmp/cf_rt_mon",
   [string]$AdbPath = "C:\Program Files\BlueStacks_nxt_cn\HD-Adb.exe",
+  [string]$PythonPath = "python",
   [switch]$DiagnosticShellMode
 )
 
@@ -30,8 +31,7 @@ $target = @("-s", $Serial)
 & $adb @target shell chmod 755 $RemotePath
 
 $serverVersion = (& $adb @target shell "$RemotePath --version").Trim()
-$hostVersion = (python -c "import frida; print(frida.__version__)").Trim()
-if (-not $hostVersion) { $hostVersion = (py -c "import frida; print(frida.__version__)").Trim() }
+$hostVersion = (& $PythonPath -c "import frida; print(frida.__version__)").Trim()
 Write-Host "Host Frida:   $hostVersion"
 Write-Host "Server Frida: $serverVersion"
 if ($hostVersion -ne $serverVersion) {
@@ -56,4 +56,4 @@ if ($rootLauncher) {
 
 Start-Sleep -Seconds 2
 Write-Host "Testing Frida device..."
-python -c "import frida; d=frida.get_device_manager().get_device('$Serial', timeout=10); print('Device:', d.name); print('Processes:', len(d.enumerate_processes()))"
+& $PythonPath -c "import frida; d=frida.get_device_manager().get_device('$Serial', timeout=10); print('Device:', d.name); print('Processes:', len(d.enumerate_processes()))"

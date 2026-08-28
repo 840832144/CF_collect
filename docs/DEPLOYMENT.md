@@ -1,74 +1,92 @@
-# 部署指南（普通 Windows 环境，无特殊宿主依赖）
+# 部署指南（普通 Windows 环境）
 
-> 这套采集器**完全独立运行**：Windows + BlueStacks 5 + adb + Python + Frida 17.17.0。
-> **不需要任何 AI 工具 / 特殊宿主 / "破解 ds"**。采集是玩家一边玩、脚本一边静默抓包，
-> 不需要截图、点击或 agent 能力。
+Collector 1.0 独立运行于 Windows + BlueStacks 5 + adb + Python + Frida 17.17.0，不依赖特定 AI 宿主。采集只发生在【游戏】专用 Android 9 研究实例中，真实 Session 与逐笔值只留本机。
 
-## 一、装什么
+## 1. 环境
 
-| 组件 | 版本/来源 | 作用 |
-|---|---|---|
+| 组件 | 要求 | 作用 |
+| --- | --- | --- |
 | Windows | 10/11 x64 | 宿主 |
-| BlueStacks 5 China | 5.22.x（或任一支持 arm64 native bridge 的） | 模拟器 |
-| 研究实例 | Pie（Android 9）、x86_64 + arm64 转译 | 跑 Cash Frenzy |
-| Cash Frenzy | `slots.pcg.casino.games.free.android` 4.78/478 | 目标游戏 |
-| Python | 3.10+ (x64) | 探针/解码 |
-| PowerShell | 5.1+ | 编排 |
-| Frida | 17.17.0 两个二进制 | 注入 + 采集 |
+| BlueStacks 5 | 支持 arm64 native bridge | 模拟器 |
+| 研究实例 | Pie / Android 9，独立于日常实例 | 运行【游戏】 |
+| 【游戏】 | package `slots.pcg.casino.games.free.android` | 目标应用 |
+| Python | 3.10+ x64 | Adapter / Session 工具 |
+| PowerShell | 5.1+ | 一键编排 |
+| Frida | 17.17.0 host/server/gadget 一致 | 已验证的 scoped probe 路线 |
 
-## 二、一次性部署
+## 2. 一次性部署
 
 ```powershell
-# 1) 克隆本项目
-git clone <你的仓库地址> CashFrenzy_collect
-cd CashFrenzy_collect
+git clone https://github.com/840832144/CF_collect.git CF_collect
+cd CF_collect
 
-# 2) 改 config.json 里的 adb_serial / instance（对应你的蓝叠实例 adb 端口）
-
-# 3) 运行 setup
+# 先用当前研究实例的现场值更新 config.json
 powershell -ExecutionPolicy Bypass -File setup.ps1
 ```
 
-`setup.ps1` 会自动：建 venv、装依赖、定位 adb、连接实例、检测 Cash Frenzy 是否装好、
-检查 root、下载/定位 Frida 二进制（也可手动把两个二进制放进 `./bin/`）。
+`setup.ps1` 会创建 `.venv`、安装依赖、定位 adb、连接实例、检查 package/Root，并下载或定位 Frida 二进制。若实例 identity、package 或 Root 不符合预期，先修复环境，不修改采集逻辑绕过。
 
-## 三、开启研究实例 root（必须，但只影响研究实例）
+## 3. Root Gate
 
-在**专用研究实例**（别用日常实例）开启 root：
-- BlueStacks 设置 → 该实例 → Root 打开 → 重启实例；
-- 或按 `docs/ROOT_TOGGLE.md` 的备份/回滚流程操作。
+只在专用研究实例按 [ROOT_TOGGLE.md](ROOT_TOGGLE.md) 开启 Root：
 
-验证：`adb -s <serial> shell "/system/xbin/bstk/su -c id"` 应返回 `uid=0(root)`。
+```text
+adb -s <serial> shell "/system/xbin/bstk/su -c id"
+```
 
-> 用**独立研究实例** + **独立研究账号**，与日常实例/账号完全隔离。这就是"账号隔离"。
+必须返回 `uid=0(root)`。开启前备份配置，Session 后关闭 Root、重启实例并验证失效。
 
-## 四、采集（每次）
+## 4. 一键运行
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File run_collector.ps1
 ```
 
-它会：预检 → 装 frida-server → 注入 gadget → 探针 READY → **提示你正常游玩** →
-停止 → 自动提取 + 汇总 → 清理。你在探针 READY 后切到游戏正常转就行，建议 ≥20 次：先手动，
-后 auto，遇升级/活动弹窗点掉即可。
+固定顺序为：
 
-## 五、出数据
-
+```text
+preflight → renamed frida-server → gadget staging → adb forward
+→ Android 9 bootstrap → scoped probe READY → User 手动操作
+→ stop → deterministic re-extract → summary → cleanup
 ```
+
+READY 后只由 User 按本次授权手动执行普通 Spin。脚本不会自动点击、Auto Spin、购买、充值或长时间挂机。
+
+## 5. 输出
+
+```text
 data/sessions/<session_id>/
-├── events.jsonl        原始结构化事件（含深度受限结构）
-├── spin_records.jsonl  精简 spin 记录（base_win/total_win/coins/...）
-├── summary.json        脱敏结构摘要（可入 Git / 分享）
-└── session_manifest.json
+├── session_manifest.json
+├── source_events.jsonl
+├── events.jsonl
+├── spin_records.jsonl
+├── summary.json
+└── summary.md
 ```
 
-用 `cf_summarize.py` 的 `summary.json` 做字段覆盖/一致性，用 `spin_records.jsonl` 做数值分析。
+- `source_events.jsonl`：Android 9 scoped source records；
+- `events.jsonl`：顶层严格为 `event + adapter + source + payload`；
+- `spin_records.jsonl`：状态为 `ok` 的 `batch_spin` Event 子集；
+- `summary.*`：只含 Adapter 命中、warning、截断和六字段覆盖计数，不含逐笔值。
 
-## 六、常见问题
+所有 JSONL 和真实 Session 都被 Git 忽略。只分享确有需要的脱敏聚合，不提交完整响应、账号、token 或绝对余额。
 
-- **设备离线**：确认蓝叠实例在跑、`adb_serial` 正确；`adb connect <serial>`。
-- **root 未生效**：按 `docs/ROOT_TOGGLE.md` 开启；改完要重启实例才生效。
-- **package not found**：Cash Frenzy 装到研究实例。
-- **probe 一直不 READY**：检查 gadget 是否注入成功（`logcat | grep "Listening on"`），
-  Frida 版本三者一致（host/server/gadget 必须都是 17.17.0）。
-- **gadget 注入后被弹窗/升级打断**：正常，采集器仍记录其余事件。
+## 6. 离线重建
+
+```powershell
+python collector/cf_rextract.py data/sessions/<session_id>
+python collector/cf_summarize.py data/sessions/<session_id>/events.jsonl `
+  --output data/sessions/<session_id>/summary.json `
+  --markdown data/sessions/<session_id>/summary.md
+```
+
+新 Session 从 `source_events.jsonl` 确定性重建。旧 Session 若只有 raw `events.jsonl`，原文件保持只读，normalized 输出写入 `normalized_events.jsonl`。
+
+## 7. 常见问题
+
+- `device offline`：核对实例已启动及 `adb_serial`；
+- `package not found`：确认【游戏】安装在当前研究实例；
+- `root NOT active`：按 Root 文档开启并重启实例；
+- Probe 未 READY：核对 Frida 三端版本、Gadget staging、forward 和前台 package；
+- Adapter 0 命中：保留本地 source/manifest，检查 exact command/shape；不要通过扩大字段或全局 Lua 日志补救；
+- 运行路线需要改变：停止并进入新的 Task/Review，不在 Collector 1.0 内继续协议研究。

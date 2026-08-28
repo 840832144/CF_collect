@@ -1,48 +1,33 @@
-# 一键部署话术（给 DSH Desktop 用户直接粘贴）
+# 一键部署话术
 
-> 前提：用户已有 DSH Desktop 且已连接 AIP，新建一个项目/对话，把下面整段话 + git 地址发进去即可。
-> AI 会按步骤自动部署、检测环境、引导采集，并汇总结果。
+把下面内容与仓库地址交给本机部署助手即可。游戏内操作、Root 授权与继续/停止决定仍由 User 完成。
 
-## 粘贴这段话术
+```text
+你是部署工程师。请把 CF_collect 被动数据采集器部署到本机，并验证 Collector 1.0 的一键入口与本地 Session 结构。
 
+Git 仓库：https://github.com/840832144/CF_collect
+
+环境：Windows + Python 3.10+ + PowerShell 5.1+ + BlueStacks 5 专用 Android 9 研究实例；【游戏】已安装。
+
+按顺序执行，每步报告实际结果：
+
+1) git clone https://github.com/840832144/CF_collect.git CF_collect
+2) 读取 README.md、config.json、docs/，用现场值核对 adb_serial、instance、package、app_version
+3) 运行 powershell -ExecutionPolicy Bypass -File setup.ps1
+4) 若专用研究实例 Root 未开启，停止并让我按 docs/ROOT_TOGGLE.md 完成备份、开启、重启与 uid=0 验证
+5) 核对 package `slots.pcg.casino.games.free.android` 确实安装在该实例
+6) 运行 powershell -ExecutionPolicy Bypass -File run_collector.ps1
+7) Probe READY 后停下来，由我按本次授权手动执行普通 Spin；禁止自动点击、Auto Spin、购买、充值或挂机
+8) 我完成后创建提示路径中的 STOP 文件，等待脚本 re-extract、summary 与 cleanup
+9) 回读 session_manifest.json、summary.json 和 summary.md，只报告：最终状态、source/event/spin 聚合计数、Adapter warning/截断、六字段覆盖
+10) 确认 Session 固定包含 session_manifest.json、source_events.jsonl、events.jsonl、spin_records.jsonl、summary.json、summary.md
+11) 确认 events.jsonl 每行顶层严格为 event + adapter + source + payload；batch_spin 只含 base_win、bonus_base_win、total_win、coins、win_lines、win_pos_list
+12) 清理 gadget、frida-server、forward 和进程；提醒我关闭 Root、重启实例并验证失效
+
+约束：
+- 只做被动、只读采集，不修改、伪造或重放请求/返回/内存/余额/奖励/服务器状态
+- 不修改 Android 9 inbound Hook/serializer 路线，不进入 signer/encryptor/XXTEA/Stalker 或全局 Lua 日志
+- 不恢复新字段，不扩大 batch_spin schema，不做 20-Spin/F4
+- Raw、JSONL、完整响应、账号、token、绝对余额和逐笔值只留本机，不上传或提交 Git
+- 任一 identity、Root、READY、cleanup 或 schema Gate 失败时报告精确 blocker，不以“应该可以”代替证据
 ```
-你是部署工程师。请把 CashFrenzy_collect 被动数据采集器完整部署到本机并完成一次验证采集。完全照做以下步骤。
-
-Git 仓库：https://github.com/840832144/CashFrenzy_collect
-
-我的环境（已具备）：Windows + DSH Desktop（已连 AIP）+ Python 3.10+ + BlueStacks 5（一个 Android 9 实例，已装 Cash Frenzy）。
-
-请按顺序执行，每步报告结果，不要跳过或简化：
-
-1) 把仓库克隆到当前工作区：git clone https://github.com/840832144/CashFrenzy_collect CashFrenzy_collect
-2) 读取 README.md、config.json、docs/，用本机实际值更新 config.json（adb_serial、instance、package、app_version）
-3) 运行部署：powershell -ExecutionPolicy Bypass -File setup.ps1
-   - 它会自动：建 venv、装依赖（frida==17.17.0 等）、检测 adb（蓝叠 HD-Adb）、连接模拟器、
-     检测 Cash Frenzy 是否安装、检查 root、下载/定位 Frida 17.17.0 两个二进制（或让我把二进制放进 ./bin/）
-4) 若 root 未开启：按 docs/ROOT_TOGGLE.md 的备份/回滚流程，在【专用研究实例】开启 root；
-   先备份 bluestacks.conf + 记录 VHDX 哈希；验证 adb -s <serial> shell "/system/xbin/bstk/su -c id" 返回 uid=0
-5) 确保 Cash Frenzy（slots.pcg.casino.games.free.android）已装到该研究实例；未装则提示我安装
-6) 运行采集：powershell -ExecutionPolicy Bypass -File run_collector.ps1
-   - 它会自动：推送并启动改名 frida-server、注入 arm64 gadget、探针 READY
-   - READY 后弹提示让我在模拟器里正常游玩 ≥20 次老虎机（先手动、可 auto、遇 respin 更好；
-     遇升级/活动弹窗点掉 × 继续）
-   - 采集完成后自动停止、提取，生成 data/sessions/<id>/summary.json（脱敏）+ spin_records.jsonl
-7) 汇总：读取 summary.json，报告捕获的 spin 数、字段覆盖（base_win/bonus_base_win/total_win/coins/
-   win_lines/win_pos_list）、是否 ≥20 次、是否有 error；确认与预期 schema 一致
-8) 收尾：清理设备上临时工具（gadget/frida-server/forward）、按 docs/ROOT_TOGGLE.md 回滚 root、
-   确认无残留（/data/local/tmp 无 cf_*、ps -A 无 cf_rt）。
-
-约束（必须遵守）：
-- 只做被动采集，不修改请求/返回值/余额/内存/服务器状态；不重打包 APK（保持 v3 签名完整）
-- 不 hook libsigner / libEncryptorP / XXTEA 加密链
-- 逐笔数值（coins/win/bet）只存本机；报告只使用脱敏的 summary.json
-- 任一命令失败先看输出归因（改配置/环境/提示我处理），不要用“应该可以”代替证据
-- 全程只使用 1 个专用研究实例 + 专用研究账号，与日常实例/账号隔离
-```
-
-## 说明
-
-- 若用户没有 root 或 Cash Frenzy 未装，AI 会停留在对应步骤并提示，不硬来。
-- 该话术让 AI 复用仓库里的 `setup.ps1`（自动检测/下载）与 `run_collector.ps1`（一键采集/清理），
-  需要大改时直接改 `config.json`，不要改采集逻辑。
-- 部署完成后，用户把 `data/sessions/*/summary.json`（脱敏）交给分析即可，数值类 `spin_records.jsonl` 留本机。
