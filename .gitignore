@@ -1,0 +1,19 @@
+# 运行期产物（不入库）
+data/
+*.bin
+*.jsonl
+output/
+sessions/
+
+# 环境 / 二进制
+.venv/
+venv/
+__pycache__/
+*.pyc
+bin/*.xz
+bin/*.so
+*.log
+
+# 敏感 / 本机
+*.backup
+*.bak*

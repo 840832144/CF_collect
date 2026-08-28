@@ -1,0 +1,17 @@
+{
+  "adb_serial": "127.0.0.1:5585",
+  "instance": "Pie64_3",
+  "package": "slots.pcg.casino.games.free.android",
+  "app_version": "4.78 / 478",
+  "gadget_port": 27043,
+  "frida_version": "17.17.0",
+  "root_launcher": "/system/xbin/bstk/su",
+  "max_depth": 7,
+  "session_duration_seconds": 2400,
+  "output_root": "data",
+  "bin": {
+    "_comment": "如果留空，setup.ps1 会尝试从 Frida 官方 GitHub Releases 自动下载到 ./bin/",
+    "frida_server": "",
+    "frida_gadget": ""
+  }
+}

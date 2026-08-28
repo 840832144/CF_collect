@@ -1,0 +1,5 @@
+frida==17.17.0
+frida-tools==13.0.2
+protobuf
+lz4
+grpcio-tools
