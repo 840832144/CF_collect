@@ -1,0 +1,1 @@
+# CashFrenzy_collect
