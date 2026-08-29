@@ -17,12 +17,12 @@ Git 仓库：https://github.com/840832144/CF_collect
 4) 若专用研究实例 Root 未开启，停止并让我按 docs/ROOT_TOGGLE.md 完成备份、开启、重启与 uid=0 验证
 5) 核对 package `slots.pcg.casino.games.free.android` 确实安装在该实例
 6) 运行 powershell -ExecutionPolicy Bypass -File run_collector.ps1
-7) Probe READY 后停下来，由我按本次授权手动执行普通 Spin；禁止自动点击、Auto Spin、购买、充值或挂机
+7) 只有 state.json 记录 verified hook-status，且 onUIThreadReceiveMessage 与 lua_pcall 均已安装时才接受 Probe READY；进程启动、脚本加载或任意 Frida 消息均不算 READY。READY 后停下来，由我按本次授权手动执行普通 Spin；禁止自动点击、Auto Spin、购买、充值或挂机
 8) 我完成后创建提示路径中的 STOP 文件，等待脚本 re-extract、summary 与 cleanup
 9) 回读 session_manifest.json、summary.json 和 summary.md，只报告：最终状态、source/event/spin 聚合计数、Adapter warning/截断、六字段覆盖
 10) 确认 Session 固定包含 session_manifest.json、source_events.jsonl、events.jsonl、spin_records.jsonl、summary.json、summary.md
 11) 确认 events.jsonl 每行顶层严格为 event + adapter + source + payload；batch_spin 只含 base_win、bonus_base_win、total_win、coins、win_lines、win_pos_list
-12) 清理 gadget、frida-server、forward 和进程；提醒我关闭 Root、重启实例并验证失效
+12) 由脚本 finally 清理 gadget、frida-server、forward、进程和临时文件；脚本不得改变 Root。提醒我手动关闭 Root、重启实例并验证 su -c id 不再返回 uid=0
 
 约束：
 - 只做被动、只读采集，不修改、伪造或重放请求/返回/内存/余额/奖励/服务器状态

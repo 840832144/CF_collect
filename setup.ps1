@@ -1,6 +1,6 @@
 # setup.ps1 — CF_collect 部署（自动检测，无 DSH 依赖）
 # 作用：检测 Python/venv、adb(蓝叠)、研究实例与【游戏】包、
-#       下载/定位 Frida 17.17.0 二进制、检查 root，输出 ready 摘要。
+#       下载/定位 Frida 17.17.0 二进制、检查 Root，输出部署 preflight 摘要（不是 Probe READY）。
 param(
   [string]$ProjectRoot = (Split-Path -Parent $MyInvocation.MyCommand.Path)
 )
@@ -53,7 +53,7 @@ if ($adb) {
   $pkg = (& $adb -s $serial shell "pm path $($config.package)" 2>&1)
   if ($pkg -match "base.apk") { Ok "package installed: $($config.package)" } else { Warn "package NOT found: $($config.package) — install 【游戏】 on the instance" }
   $su = (& $adb -s $serial shell "$($config.root_launcher) -c id" 2>&1) -join " "
-  if ($su -match "uid=0") { Ok "root active; will inject Gadget" } else { Warn "root NOT active. Enable root on the research instance (see docs/ROOT_TOGGLE.md) before running." }
+  if ($su -match "uid=0") { Ok "Root active (detection only; setup does not change Root)" } else { Warn "Root NOT active. User must enable Root on the research instance (see docs/ROOT_TOGGLE.md) before running." }
 }
 
 Step "4. Frida 17.17.0 binaries (.bin)"
@@ -82,7 +82,7 @@ Step "5. Host frida version check"
 $hostVer = (& $venvPy -c "import frida; print(frida.__version__)" 2>$null).Trim()
 if ($hostVer -eq $config.frida_version) { Ok "host frida: $hostVer" } else { Warn "host frida: $hostVer (expected $($config.frida_version))" }
 
-"`n=== setup complete ==="
+"`n=== setup preflight complete (Probe is not READY) ==="
 "  config:     $configPath"
 "  venv:       $venvPy"
 "  adb:        $adb"

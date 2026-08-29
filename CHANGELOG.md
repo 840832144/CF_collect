@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.1 - 2026-08-29
+
+### Fixed
+
+- 把一键入口的运行时 cleanup 收敛到 `finally`，READY 失败或中途异常时也按 LIFO 清理 Probe、ADB forward、Gadget、server 与临时文件，并显式报告 cleanup 失败。
+- READY 只接受已验证的 `hook-status`：`onUIThreadReceiveMessage` 与 `lua_pcall` 必须均已安装；脚本加载或任意 Frida 消息不再误报 READY。
+- 统一 Root 文档口径：Collector 只检测、不改变 Root；会话后由 User 手动关闭 Root、重启研究实例并验证失效。
+
+### Boundaries
+
+- 本修订没有启动模拟器、执行 Spin、改变 Android 9 Hook/serializer 路线或扩大 `batch_spin` 六字段 schema。
+
 ## 1.0.0 - 2026-08-28
 
 ### Added

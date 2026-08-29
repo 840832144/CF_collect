@@ -27,6 +27,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from adapters.registry import adapt_record
+from collector.readiness import classify_ready_payload
 from collector.session_artifacts import SessionArtifacts
 
 MAX_DEPTH = 4
@@ -342,6 +343,7 @@ def main() -> None:
     parser.add_argument("--session-dir", required=True)
     parser.add_argument("--endpoint", default="127.0.0.1:27043")
     parser.add_argument("--duration", type=int, default=600)
+    parser.add_argument("--ready-timeout", type=int, default=30)
     parser.add_argument("--mode", choices=("stability", "lua"), default="lua")
     parser.add_argument("--package", default=PACKAGE)
     parser.add_argument("--app-version", default=os.environ.get("CF_APP_VERSION", APP_VERSION))
@@ -371,6 +373,9 @@ def main() -> None:
     stopping = False
     finishing = False
     detached: dict[str, Any] | None = None
+    ready = False
+    readiness: dict[str, Any] = {"status": "pending", "mode": args.mode}
+    failure: str | None = None
     start_utc = utc_now()
     limits = {
         "max_depth": args.max_depth,
@@ -387,6 +392,8 @@ def main() -> None:
             "limits": limits,
             "counts": counts,
             "detached": detached,
+            "readiness": readiness,
+            "failure": failure,
         }
         state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
 
@@ -420,12 +427,37 @@ def main() -> None:
             counts["keepalive"] += 1
 
     def on_message(message: dict[str, Any], data: bytes | None) -> None:
+        nonlocal ready, readiness, failure, stopping
         if message.get("type") == "send" and isinstance(message.get("payload"), dict):
-            record(message["payload"])
+            payload = message["payload"]
+            record(payload)
+            if not ready:
+                candidate = classify_ready_payload(args.mode, payload)
+                if candidate is not None:
+                    readiness = candidate
+                    if candidate["status"] == "verified":
+                        ready = True
+                        persist("ready")
+                    else:
+                        failure = "probe READY signal rejected"
+                        stopping = True
+                        persist("failed")
+                else:
+                    persist("starting")
+            else:
+                persist("ready")
         else:
             record({"kind": "frida-message", "message_type": message.get("type")})
             counts["errors"] += 1
-        persist("ready")
+            failure = f"frida message before clean stop: {message.get('type')}"
+            stopping = True
+            if not ready:
+                readiness = {
+                    "status": "rejected",
+                    "mode": args.mode,
+                    "kind": "frida-message",
+                }
+            persist("failed")
 
     def on_detached(reason: str, crash: Any) -> None:
         nonlocal detached, stopping
@@ -441,32 +473,63 @@ def main() -> None:
 
     signal.signal(signal.SIGINT, request_stop)
     signal.signal(signal.SIGTERM, request_stop)
+    session = None
+    script = None
+    final_status = "failed"
     persist("starting")
-    device = frida.get_device_manager().add_remote_device(args.endpoint)
-    gadget = device.get_process("Gadget")
-    session = device.attach(gadget.pid)
-    session.on("detached", on_detached)
-    script = session.create_script(build_javascript(args.mode, args.max_depth))
-    script.on("message", on_message)
-    script.load()
-    persist("ready")
-    print(f"READY mode={args.mode} session={session_dir}", flush=True)
-
-    deadline = time.monotonic() + args.duration
     try:
+        device = frida.get_device_manager().add_remote_device(args.endpoint)
+        gadget = device.get_process("Gadget")
+        session = device.attach(gadget.pid)
+        session.on("detached", on_detached)
+        script = session.create_script(build_javascript(args.mode, args.max_depth))
+        script.on("message", on_message)
+        script.load()
+
+        ready_deadline = time.monotonic() + args.ready_timeout
+        while not ready and not stopping and time.monotonic() < ready_deadline:
+            time.sleep(0.05)
+        if not ready:
+            if failure is None:
+                if detached is not None:
+                    failure = f"probe detached before READY: {detached['reason']}"
+                    failure_kind = "detached"
+                else:
+                    failure = f"probe READY timeout after {args.ready_timeout}s"
+                    failure_kind = "timeout"
+                readiness = {
+                    "status": "rejected",
+                    "mode": args.mode,
+                    "kind": failure_kind,
+                }
+            persist("failed")
+            raise RuntimeError(failure)
+
+        print(
+            f"READY verified mode={args.mode} kind={readiness['kind']} session={session_dir}",
+            flush=True,
+        )
+        deadline = time.monotonic() + args.duration
         while not stopping and not stop_path.exists() and time.monotonic() < deadline:
             time.sleep(0.25)
+        if failure is not None:
+            final_status = "failed"
+        else:
+            final_status = "detached" if detached else "stopped"
     finally:
         finishing = True
-        try:
-            script.unload()
-        except frida.InvalidOperationError:
-            pass
-        try:
-            session.detach()
-        except frida.InvalidOperationError:
-            pass
-        final_status = "detached" if detached else "stopped"
+        if script is not None:
+            try:
+                script.unload()
+            except Exception:
+                pass
+        if session is not None:
+            try:
+                session.detach()
+            except Exception:
+                pass
+        if detached and final_status == "failed" and failure is None:
+            final_status = "detached"
         persist(final_status)
         artifacts.write_manifest(
             session_id=session_dir.name,

@@ -8,7 +8,7 @@
 - [ ] 不重打包 APK（保持 v3 签名完整），用 Houdini runtime 注入 Gadget
 - [ ] frida-server 改名（`cf_rt_mon`）+ 会话后删除；不常驻
 - [ ] Gadget 文件名中性化；config 只 listen `127.0.0.1`（不回连外部）
-- [ ] 仅会话期开 root，会话后回滚（见 ROOT_TOGGLE.md）
+- [ ] 仅会话期开 Root；会话后由 User 手动关闭、重启并验证失效（见 ROOT_TOGGLE.md）
 - [ ] 所有 hook 只读、仅 inbound dispatch 线程 scope 激活；回调 try/catch，绝不 crash 客户端
 - [ ] 不 hook `libsigner`/`libEncryptorP`/XXTEA/SSL；无 Stalker、无全局 Lua 日志
 - [ ] 每次会话前 120s 无操作稳定性 Gate（Gadget 加载稳定性，TASK-0024 标准）
@@ -30,7 +30,7 @@
 ## E. 会话规程
 1. 会话前核对 A/B/C/D；确认无残留；root 已按流程开启
 2. 会话中玩家正常游玩，探针只读
-3. 会话后自动清理（gadget/server/forward/进程）+ root 回滚
+3. 会话后脚本自动清理 gadget/server/forward/进程/临时文件；User 另行手动关闭 Root、重启并验证失效
 
 ## F. 异常预案
 - 崩溃/警告/异常掉线：立即停采，先归因（hook vs 风控），再决定是否继续

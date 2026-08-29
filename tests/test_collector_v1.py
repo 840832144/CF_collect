@@ -11,6 +11,7 @@ from adapters import batch_spin, keepalive
 from adapters.registry import adapt_record, adapt_stream
 from collector.cf_rextract import reextract_session
 from collector.cf_summarize import render_markdown, summarize
+from collector.readiness import REQUIRED_LUA_HOOKS, classify_ready_payload
 from collector.session_artifacts import ARTIFACTS, SessionArtifacts
 from tests.synthetic_records import make_batch_spin_record, make_keepalive_record, scalar
 
@@ -187,6 +188,33 @@ class SessionTests(unittest.TestCase):
         self.assertIn("`coins`: 1/1", markdown)
 
 
+class ReadinessTests(unittest.TestCase):
+    def test_lua_ready_requires_both_scoped_hooks(self) -> None:
+        partial = classify_ready_payload(
+            "lua",
+            {"kind": "hook-status", "mode": "lua", "installed": ["lua_pcall"]},
+        )
+        assert partial is not None
+        self.assertEqual("rejected", partial["status"])
+        self.assertEqual(["onUIThreadReceiveMessage"], partial["missing_hooks"])
+
+        complete = classify_ready_payload(
+            "lua",
+            {"kind": "hook-status", "mode": "lua", "installed": list(REQUIRED_LUA_HOOKS)},
+        )
+        assert complete is not None
+        self.assertEqual("verified", complete["status"])
+        self.assertEqual([], complete["missing_hooks"])
+
+    def test_unrelated_or_failed_stability_messages_are_not_ready(self) -> None:
+        self.assertIsNone(classify_ready_payload("lua", {"kind": "lua-pcall-args"}))
+        rejected = classify_ready_payload(
+            "stability", {"kind": "stability-ready", "modulePresent": False}
+        )
+        assert rejected is not None
+        self.assertEqual("rejected", rejected["status"])
+
+
 class DeploymentRegressionTests(unittest.TestCase):
     def test_one_click_route_and_android_hook_scope_are_preserved(self) -> None:
         run = (ROOT / "run_collector.ps1").read_text(encoding="utf-8")
@@ -206,6 +234,11 @@ class DeploymentRegressionTests(unittest.TestCase):
         self.assertIn('"--mode", "lua"', run)
         self.assertIn("-PythonPath $venvPy", run)
         self.assertNotIn(">=20", run)
+        self.assertIn("} finally {", run)
+        self.assertIn("Invoke-CollectorCleanup", run)
+        self.assertIn("Test-ProbeReadyState", run)
+        self.assertNotIn("$c.Split(' ')", run)
+        self.assertNotIn("$c.Substring(6)", run)
 
         probe = (ROOT / "collector" / "cf_probe.py").read_text(encoding="utf-8")
         self.assertIn("Interceptor.attach(dispatch", probe)
@@ -214,6 +247,19 @@ class DeploymentRegressionTests(unittest.TestCase):
         self.assertIn("if (scope === undefined || scope.depth <= 0) return;", probe)
         self.assertNotIn("Stalker.", probe)
         self.assertNotIn("libEncryptorP", probe)
+        loaded_to_print = probe[probe.index("script.load()") : probe.index("print(", probe.index("script.load()"))]
+        self.assertNotIn('persist("ready")', loaded_to_print)
+        self.assertIn("while not ready", loaded_to_print)
+        self.assertIn("classify_ready_payload", probe)
+
+    def test_root_is_manual_and_not_part_of_collector_cleanup(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        root_doc = (ROOT / "docs" / "ROOT_TOGGLE.md").read_text(encoding="utf-8")
+        run = (ROOT / "run_collector.ps1").read_text(encoding="utf-8")
+        self.assertNotIn("临时 Root 在 Session 后清理/回滚", readme)
+        self.assertIn("Collector 只检测、不改变 BlueStacks Root", readme)
+        self.assertIn("Root 始终由 User 手动控制", root_doc)
+        self.assertIn("cleanup did not change BlueStacks Root", run)
 
 
 if __name__ == "__main__":

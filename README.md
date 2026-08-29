@@ -72,12 +72,12 @@ data/sessions/<session_id>/
 # 一次性部署
 powershell -ExecutionPolicy Bypass -File setup.ps1
 
-# 一键运行：preflight → server → gadget → bootstrap → probe READY
+# 一键运行：preflight → server → gadget → bootstrap → verified probe READY
 #          → User 手动操作 → stop → re-extract → summary → cleanup
 powershell -ExecutionPolicy Bypass -File run_collector.ps1
 ```
 
-Probe READY 后只按本次明确授权由 User 手动执行普通 Spin。采集器不会自动点击、Auto Spin、购买、充值或挂机。完成后在提示的 Session 目录创建 `STOP` 文件，或等待配置的时限结束。
+Probe 只有在收到并验证 `hook-status`，且 `onUIThreadReceiveMessage` 与 `lua_pcall` 两个 scoped hooks 均已安装后才进入 READY。进程启动、脚本加载或任意 Frida 消息都不等于 READY。READY 后只按本次明确授权由 User 手动执行普通 Spin。采集器不会自动点击、Auto Spin、购买、充值或挂机。完成后在提示的 Session 目录创建 `STOP` 文件，或等待配置的时限结束。
 
 手动排障入口保持可用：
 
@@ -106,7 +106,8 @@ py -m unittest discover -s tests -v
 
 - Hook 只在 inbound dispatch thread/scope 内激活；无全局 Lua API 日志、Stalker 或 signer/encryptor/XXTEA 路线；
 - 不重打包 APK，不修改请求/返回/余额/奖励，不伪造或重放业务消息；
-- Gadget、server、forward、进程和临时 Root 在 Session 后清理/回滚；
+- Gadget、server、forward、进程和临时文件由 `finally` 路径清理；Collector 只检测、不改变 BlueStacks Root；
+- Session 后由 User 按 [Root 开关说明](docs/ROOT_TOGGLE.md) 手动关闭 Root、重启研究实例并验证 `su -c id` 不再返回 `uid=0`；
 - 若需要恢复新字段、扩大 schema、进入新协议层或修改 Android 9 路线，停止并另走 Review/Task；
 - `.local/`、`data/`、JSONL、APK、SO、日志和真实 Session 均不进入 Git。
 
