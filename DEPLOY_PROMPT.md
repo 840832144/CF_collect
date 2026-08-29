@@ -22,7 +22,7 @@ Git 仓库：https://github.com/840832144/CF_collect
 9) 回读 session_manifest.json、summary.json 和 summary.md，只报告：最终状态、source/event/spin 聚合计数、Adapter warning/截断、六字段覆盖
 10) 确认 Session 固定包含 session_manifest.json、source_events.jsonl、events.jsonl、spin_records.jsonl、summary.json、summary.md
 11) 确认 events.jsonl 每行顶层严格为 event + adapter + source + payload；batch_spin 只含 base_win、bonus_base_win、total_win、coins、win_lines、win_pos_list
-12) 由脚本 finally 清理 gadget、frida-server、forward、进程和临时文件；脚本不得改变 Root。提醒我手动关闭 Root、重启实例并验证 su -c id 不再返回 uid=0
+12) 由脚本 finally 按严格 LIFO 清理本轮拥有的精确 Probe PID、frida-server PID/remote_path、forward、Gadget/config 和临时文件；回读确认 Probe、server、forward、Gadget/config 与 cf_* 均无残留，停止/验证失败须聚合报告。脚本不得改变 Root。提醒我手动关闭 Root、重启实例并验证 su -c id 不再返回 uid=0
 
 约束：
 - 只做被动、只读采集，不修改、伪造或重放请求/返回/内存/余额/奖励/服务器状态

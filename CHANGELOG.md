@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.0.2 - 2026-08-29
+
+### Fixed
+
+- Frida server helper 现在返回 `pid / remote_path / started_by_run`；cleanup 只停止本轮拥有且 PID、路径精确匹配的后台 server，再删除本轮文件。
+- cleanup engine 使用可注入 action、严格 LIFO、幂等 stop/verify 与错误聚合；运行错误、停止失败、验证失败和残留不再相互覆盖或静默丢失。
+- finally 后逐项验证 Probe、server、forward、Gadget/config 与 `/data/local/tmp/cf_*` 无残留。
+
+### Tests
+
+- 新增 7/7 可注入 cleanup tests：各步骤故障、严格 LIFO、幂等、停止失败、残留、错误聚合和 ownership gate。
+
+### Boundaries
+
+- READY、Root 文档口径、Android 9 Hook/serializer 与 `batch_spin` 六字段保持不变；未启动模拟器、Frida、Collector 或执行 Spin。
+
 ## 1.0.1 - 2026-08-29
 
 ### Fixed

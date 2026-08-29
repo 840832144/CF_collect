@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -260,6 +261,44 @@ class DeploymentRegressionTests(unittest.TestCase):
         self.assertIn("Collector 只检测、不改变 BlueStacks Root", readme)
         self.assertIn("Root 始终由 User 手动控制", root_doc)
         self.assertIn("cleanup did not change BlueStacks Root", run)
+
+    def test_cleanup_injection_suite_and_server_ownership_contract(self) -> None:
+        result = subprocess.run(
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(ROOT / "tests" / "Test-Cleanup.ps1"),
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertIn("Cleanup injectable tests: PASS (7/7)", result.stdout)
+
+        helper = (ROOT / "collector" / "cf_start_frida_server.ps1").read_text(
+            encoding="utf-8"
+        )
+        run = (ROOT / "run_collector.ps1").read_text(encoding="utf-8")
+        for field in ("pid", "remote_path", "started_by_run"):
+            self.assertIn(field, helper)
+            self.assertIn(field, run)
+        self.assertIn("Stop-ExactRemoteServer", run)
+        self.assertIn("Get-ExactRemoteServerPids", run)
+        self.assertIn("process rollback", helper)
+        self.assertIn("file rollback", helper)
+        self.assertNotIn("pkill", run.lower())
+        self.assertNotIn("killall", run.lower())
+        self.assertNotRegex(helper, r"\$pid\b")
+        self.assertNotRegex(run, r"\$pid\b")
+        self.assertIn("Probe/server/forward/Gadget/config/cf_* are absent", run)
+        self.assertLess(run.index('Name "temp-gadget-config"'), run.index("push $gadgetHost"))
+        self.assertLess(run.index('Name "adb-forward:$gadgetPort"'), run.index('forward "tcp:$gadgetPort"'))
+        self.assertLess(run.index('Name "package-process:$pkg"'), run.index("cf_bootstrap_gadget.py"))
 
 
 if __name__ == "__main__":

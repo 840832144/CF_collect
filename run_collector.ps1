@@ -14,6 +14,7 @@ $scriptDir = Join-Path $project "collector"
 $venvPy = Join-Path $project ".venv\Scripts\python.exe"
 if (-not (Test-Path $venvPy)) { throw "Run setup.ps1 first (missing $venvPy)" }
 if ($DurationSeconds -le 0) { $DurationSeconds = [int]$config.session_duration_seconds }
+. (Join-Path $scriptDir "cf_cleanup.ps1")
 
 $serial = $config.adb_serial
 $pkg = $config.package
@@ -46,57 +47,154 @@ function Test-ProbeReadyState([object]$State) {
   return (($installed -contains "onUIThreadReceiveMessage") -and ($installed -contains "lua_pcall"))
 }
 
-function Invoke-CollectorCleanup {
+function Invoke-AdbChecked {
+  param([string[]]$Arguments)
+  $output = @(& $adb @Arguments 2>&1)
+  if ($LASTEXITCODE -ne 0) {
+    throw "adb exit=$LASTEXITCODE args=$($Arguments -join ' ') output=$($output -join ' ')"
+  }
+  return ,$output
+}
+
+function Get-ExactRemoteServerPids {
+  param([string]$RemotePath)
+  $command = 'for d in /proc/[0-9]*; do [ -r "$d/cmdline" ] || continue; c=$(tr "\000" " " < "$d/cmdline"); case "$c" in "__REMOTE__ -D"*) printf "%s|%s\n" "${d##*/}" "$c";; esac; done'.Replace('__REMOTE__', $RemotePath)
+  $lines = @(Invoke-AdbChecked -Arguments @("-s", $serial, "shell", $command))
+  $pids = New-Object System.Collections.Generic.List[int]
+  foreach ($line in $lines) {
+    $text = [string]$line
+    if ($text -notmatch '^([0-9]+)\|(.*)$') { continue }
+    $processId = [int]$Matches[1]
+    $cmdline = $Matches[2].Trim()
+    $executable = ($cmdline -split '\s+', 2)[0]
+    if ($executable -eq $RemotePath) { $pids.Add($processId) }
+  }
+  return ,$pids.ToArray()
+}
+
+function Get-ExistingRemotePaths {
+  param([string[]]$Paths)
+  $present = New-Object System.Collections.Generic.List[string]
+  foreach ($path in $Paths) {
+    $output = @(Invoke-AdbChecked -Arguments @("-s", $serial, "shell", "if [ -e '$path' ]; then echo PRESENT; else echo ABSENT; fi"))
+    if (($output -join " ").Trim() -eq "PRESENT") { $present.Add($path) }
+  }
+  return ,$present.ToArray()
+}
+
+function Get-CfTempResidue {
+  $command = 'for f in /data/local/tmp/cf_*; do [ -e "$f" ] && printf "%s\n" "$f"; done'
+  $output = @(Invoke-AdbChecked -Arguments @("-s", $serial, "shell", $command))
+  return ,@($output | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ })
+}
+
+function Test-ForwardPresent {
+  $lines = @(Invoke-AdbChecked -Arguments @("-s", $serial, "forward", "--list"))
+  foreach ($line in $lines) {
+    $parts = ([string]$line).Trim() -split '\s+'
+    if ($parts.Count -ge 3 -and $parts[0] -eq $serial -and $parts[1] -eq "tcp:$gadgetPort") { return $true }
+  }
+  return $false
+}
+
+function Get-PackagePids {
+  $output = @(Invoke-AdbChecked -Arguments @("-s", $serial, "shell", "pidof '$pkg' 2>/dev/null || true"))
+  $text = ($output -join " ").Trim()
+  if (-not $text) { return ,@() }
+  return ,@($text -split '\s+' | Where-Object { $_ -match '^[0-9]+$' } | ForEach-Object { [int]$_ })
+}
+
+function Stop-ExactRemoteServer {
+  param([int]$ExpectedPid, [string]$RemotePath)
+  $current = @(Get-ExactRemoteServerPids -RemotePath $RemotePath)
+  if ($current -notcontains $ExpectedPid) { return }
+  $null = Invoke-AdbChecked -Arguments @("-s", $serial, "shell", "$rootLauncher -c 'kill $ExpectedPid'")
+  for ($attempt=0; $attempt -lt 10; $attempt++) {
+    Start-Sleep -Milliseconds 200
+    if (@(Get-ExactRemoteServerPids -RemotePath $RemotePath) -notcontains $ExpectedPid) { return }
+  }
+  $null = Invoke-AdbChecked -Arguments @("-s", $serial, "shell", "$rootLauncher -c 'kill -9 $ExpectedPid'")
+  Start-Sleep -Milliseconds 200
+  if (@(Get-ExactRemoteServerPids -RemotePath $RemotePath) -contains $ExpectedPid) {
+    throw "owned frida-server pid $ExpectedPid did not stop"
+  }
+}
+
+function Stop-OwnedLocalProcess {
+  param([int]$ProcessId, [long]$StartTicks)
+  $process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+  if ($null -eq $process) { return }
+  if ($process.StartTime.ToUniversalTime().Ticks -ne $StartTicks) {
+    throw "pid $ProcessId was reused; refusing to stop a foreign process"
+  }
+  Stop-Process -Id $ProcessId -Force -ErrorAction Stop
+  Wait-Process -Id $ProcessId -Timeout 10 -ErrorAction SilentlyContinue
+  $remaining = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+  if ($null -ne $remaining -and $remaining.StartTime.ToUniversalTime().Ticks -eq $StartTicks) {
+    throw "owned local process pid $ProcessId did not stop"
+  }
+}
+
+function Test-OwnedLocalProcessAbsent {
+  param([int]$ProcessId, [long]$StartTicks)
+  $process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+  $ownedPresent = ($null -ne $process -and $process.StartTime.ToUniversalTime().Ticks -eq $StartTicks)
+  [pscustomobject]@{ Success = (-not $ownedPresent); Detail = if ($ownedPresent) { "pid=$ProcessId still running" } else { "absent" } }
+}
+
+function Test-CollectorResiduals {
   param(
-    [System.Collections.IList]$Items,
-    [string]$AdbPath,
-    [string]$DeviceSerial,
-    [string]$PackageName,
-    [bool]$CanForceStop
+    [bool]$DeviceConfirmed,
+    [string]$ServerPath,
+    [string]$AppGadgetPath,
+    [string]$AppConfigPath,
+    [Nullable[int]]$ProbePid,
+    [Nullable[long]]$ProbeStartTicks
   )
-  $cleanupErrors = New-Object System.Collections.Generic.List[string]
-  for ($index = $Items.Count - 1; $index -ge 0; $index--) {
-    $item = $Items[$index]
-    try {
-      switch ($item.Kind) {
-        "Process" {
-          Stop-Process -Id ([int]$item.Id) -Force -ErrorAction SilentlyContinue
-        }
-        "Forward" {
-          $nativeOutput = & $AdbPath -s $DeviceSerial forward --remove "tcp:$($item.Port)" 2>&1
-          if ($LASTEXITCODE -ne 0) { throw "adb forward cleanup exit=$LASTEXITCODE output=$($nativeOutput -join ' ')" }
-        }
-        "Shell" {
-          $nativeOutput = & $AdbPath -s $DeviceSerial shell $item.Command 2>&1
-          if ($LASTEXITCODE -ne 0) { throw "adb shell cleanup exit=$LASTEXITCODE output=$($nativeOutput -join ' ')" }
-        }
-        default { throw "unknown cleanup kind: $($item.Kind)" }
-      }
-    } catch {
-      $cleanupErrors.Add("$($item.Kind): $($_.Exception.Message)")
-    }
+  $errors = New-Object System.Collections.Generic.List[string]
+  if ($null -ne $ProbePid -and $null -ne $ProbeStartTicks) {
+    $probeState = Test-OwnedLocalProcessAbsent -ProcessId $ProbePid.Value -StartTicks $ProbeStartTicks.Value
+    if (-not $probeState.Success) { $errors.Add("Probe residual: $($probeState.Detail)") }
   }
-  if ($CanForceStop) {
+  if (-not $DeviceConfirmed) { return ,$errors.ToArray() }
+
+  try {
+    $serverPids = @(Get-ExactRemoteServerPids -RemotePath $ServerPath)
+    if ($serverPids.Count -gt 0) { $errors.Add("server residual: exact pid=$($serverPids -join ',') path=$ServerPath") }
+  } catch { $errors.Add("server verify failed: $($_.Exception.Message)") }
+  try {
+    if (Test-ForwardPresent) { $errors.Add("forward residual: $serial tcp:$gadgetPort") }
+  } catch { $errors.Add("forward verify failed: $($_.Exception.Message)") }
+  if ($AppGadgetPath -and $AppConfigPath) {
     try {
-      $nativeOutput = & $AdbPath -s $DeviceSerial shell "am force-stop $PackageName" 2>&1
-      if ($LASTEXITCODE -ne 0) { throw "force-stop exit=$LASTEXITCODE output=$($nativeOutput -join ' ')" }
-    } catch {
-      $cleanupErrors.Add("ForceStop: $($_.Exception.Message)")
-    }
+      $appResidual = @(Get-ExistingRemotePaths -Paths @($AppGadgetPath, $AppConfigPath))
+      if ($appResidual.Count -gt 0) { $errors.Add("Gadget/config residual: $($appResidual -join ',')") }
+    } catch { $errors.Add("Gadget/config verify failed: $($_.Exception.Message)") }
   }
-  return $cleanupErrors.ToArray()
+  try {
+    $cfResidual = @(Get-CfTempResidue)
+    if ($cfResidual.Count -gt 0) { $errors.Add("cf_* residual: $($cfResidual -join ',')") }
+  } catch { $errors.Add("cf_* verify failed: $($_.Exception.Message)") }
+  return ,$errors.ToArray()
 }
 
 $adb = Adb
 $serverLocal = if ($config.bin.frida_server) { $config.bin.frida_server } else { Join-Path $project "bin\frida-server-17.17.0-android-x86_64" }
 $gadgetHost  = if ($config.bin.frida_gadget) { $config.bin.frida_gadget } else { Join-Path $project "bin\frida-gadget-17.17.0-android-arm64.so" }
 $configHost  = Join-Path $scriptDir "cf_gadget.config.so"
+$serverRemotePath = "/data/local/tmp/cf_rt_mon"
 
 $cleanup = New-Object System.Collections.Generic.List[object]
-$canForceStop = $false
 $runError = $null
+$finalFailure = $null
 $sessionDir = $null
 $probe = $null
+$probePid = $null
+$probeStartTicks = $null
+$deviceConfirmed = $false
+$appDir = $null
+$gadgetPath = $null
+$configPath = $null
 
 try {
   Step "0. Preflight"
@@ -104,14 +202,26 @@ try {
   if (-not (Test-Path $gadgetHost))  { throw "frida-gadget not found: $gadgetHost (run setup.ps1)" }
   & $adb connect $serial | Out-Null
   if ((& $adb -s $serial get-state 2>&1).Trim() -ne "device") { throw "device offline: $serial" }
+  $deviceConfirmed = $true
   $pkgLine = (& $adb -s $serial shell "pm path $pkg" 2>&1 | Select-String "base.apk" | Select-Object -First 1)
   if (-not $pkgLine) { throw "package not installed: $pkg" }
-  $canForceStop = $true
   $appDir = ($pkgLine -replace '^package:', '' -replace '/base\.apk\s*$', '').Trim()
   $gadgetPath = "$appDir/lib/arm64/libcash-gadget.so"
   $configPath = "$appDir/lib/arm64/libcash-gadget.config.so"
   $su = (& $adb -s $serial shell "$rootLauncher -c id" 2>&1) -join " "
   if ($su -notmatch "uid=0") { throw "root NOT active. User must enable Root on the research instance (docs/ROOT_TOGGLE.md)." }
+
+  $preexisting = New-Object System.Collections.Generic.List[string]
+  $existingServer = @(Get-ExactRemoteServerPids -RemotePath $serverRemotePath)
+  if ($existingServer.Count -gt 0) { $preexisting.Add("server pid=$($existingServer -join ',')") }
+  $existingFiles = @(Get-ExistingRemotePaths -Paths @($gadgetPath, $configPath))
+  foreach ($path in $existingFiles) { $preexisting.Add($path) }
+  if (Test-ForwardPresent) { $preexisting.Add("forward=$serial tcp:$gadgetPort") }
+  foreach ($path in @(Get-CfTempResidue)) { $preexisting.Add($path) }
+  if ($preexisting.Count -gt 0) {
+    throw "preflight ownership gate found residuals; no foreign resource was changed: $($preexisting -join '; ')"
+  }
+
   Ok "device online; appDir=$appDir; root active"
   $sessionId = "session_" + (Get-Date -Format 'yyyyMMdd_HHmmss')
   $sessionDir = Join-Path $project (Join-Path $config.output_root "sessions\$sessionId")
@@ -119,12 +229,46 @@ try {
   Ok "session dir: $sessionDir"
 
   Step "1. Start renamed frida-server"
-  $cleanup.Add([pscustomobject]@{ Kind = "Shell"; Command = "rm -f /data/local/tmp/cf_rt_mon /data/local/tmp/cf_rt_mon.log" })
-  & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scriptDir "cf_start_frida_server.ps1") -ServerPath $serverLocal -Serial $serial -AdbPath $adb -PythonPath $venvPy | Out-Host
+  $serverObjects = @(& (Join-Path $scriptDir "cf_start_frida_server.ps1") -ServerPath $serverLocal -Serial $serial -RemotePath $serverRemotePath -AdbPath $adb -PythonPath $venvPy)
+  $serverResult = @($serverObjects | Where-Object { $null -ne $_.PSObject.Properties['pid'] -and $null -ne $_.PSObject.Properties['remote_path'] -and $null -ne $_.PSObject.Properties['started_by_run'] })
+  if ($serverResult.Count -ne 1) { throw "server helper did not return exactly one ownership result" }
+  $serverResult = $serverResult[0]
+  $serverPid = [int]$serverResult.pid
+  $serverOwned = [bool]$serverResult.started_by_run
+  $serverPathOwned = [string]$serverResult.remote_path
+
+  $serverFileStop = { $null = Invoke-AdbChecked -Arguments @("-s", $serial, "shell", "rm -f '$serverPathOwned' '$serverPathOwned.log'") }.GetNewClosure()
+  $serverFileVerify = {
+    $present = @(Get-ExistingRemotePaths -Paths @($serverPathOwned, "$serverPathOwned.log"))
+    [pscustomobject]@{ Success = ($present.Count -eq 0); Detail = if ($present.Count) { $present -join ',' } else { 'absent' } }
+  }.GetNewClosure()
+  $cleanup.Add((New-CollectorCleanupAction -Name "server-files:$serverPathOwned" -Owned $serverOwned -Stop $serverFileStop -Verify $serverFileVerify))
+
+  $serverStop = { Stop-ExactRemoteServer -ExpectedPid $serverPid -RemotePath $serverPathOwned }.GetNewClosure()
+  $serverVerify = {
+    $pids = @(Get-ExactRemoteServerPids -RemotePath $serverPathOwned)
+    [pscustomobject]@{ Success = ($pids.Count -eq 0); Detail = if ($pids.Count) { "exact pid=$($pids -join ',')" } else { 'absent' } }
+  }.GetNewClosure()
+  $cleanup.Add((New-CollectorCleanupAction -Name "server-process:$serverPid" -Owned $serverOwned -Stop $serverStop -Verify $serverVerify))
+  if (-not $serverOwned) { throw "server helper reused pid $serverPid; this run did not acquire ownership" }
 
   Step "2. Stage gadget + config into game namespace"
-  $cleanup.Add([pscustomobject]@{ Kind = "Shell"; Command = "rm -f /data/local/tmp/cf_gadget.so /data/local/tmp/cf_gadget.config.so" })
-  $cleanup.Add([pscustomobject]@{ Kind = "Shell"; Command = "$rootLauncher -c 'rm -f $gadgetPath $configPath'" })
+  $tempGadgetPaths = @('/data/local/tmp/cf_gadget.so','/data/local/tmp/cf_gadget.config.so')
+  $tempStop = { $null = Invoke-AdbChecked -Arguments @("-s", $serial, "shell", "rm -f '$($tempGadgetPaths[0])' '$($tempGadgetPaths[1])'") }.GetNewClosure()
+  $tempVerify = {
+    $present = @(Get-ExistingRemotePaths -Paths $tempGadgetPaths)
+    [pscustomobject]@{ Success = ($present.Count -eq 0); Detail = if ($present.Count) { $present -join ',' } else { 'absent' } }
+  }.GetNewClosure()
+  $cleanup.Add((New-CollectorCleanupAction -Name "temp-gadget-config" -Stop $tempStop -Verify $tempVerify))
+
+  $appGadgetPaths = @($gadgetPath,$configPath)
+  $appStop = { $null = Invoke-AdbChecked -Arguments @("-s", $serial, "shell", "$rootLauncher -c 'rm -f $($appGadgetPaths[0]) $($appGadgetPaths[1])'") }.GetNewClosure()
+  $appVerify = {
+    $present = @(Get-ExistingRemotePaths -Paths $appGadgetPaths)
+    [pscustomobject]@{ Success = ($present.Count -eq 0); Detail = if ($present.Count) { $present -join ',' } else { 'absent' } }
+  }.GetNewClosure()
+  $cleanup.Add((New-CollectorCleanupAction -Name "app-gadget-config" -Stop $appStop -Verify $appVerify))
+
   & $adb -s $serial push $gadgetHost /data/local/tmp/cf_gadget.so | Out-Null
   & $adb -s $serial push $configHost /data/local/tmp/cf_gadget.config.so | Out-Null
   & $adb -s $serial shell "$rootLauncher -c 'cp /data/local/tmp/cf_gadget.so $gadgetPath && cp /data/local/tmp/cf_gadget.config.so $configPath && chmod 755 $gadgetPath && chmod 644 $configPath && echo STAGED_OK'" | Out-Null
@@ -133,11 +277,15 @@ try {
   Ok "gadget staged"
 
   Step "3. ADB forward"
-  $cleanup.Add([pscustomobject]@{ Kind = "Forward"; Port = $gadgetPort })
-  & $adb -s $serial forward --remove "tcp:$gadgetPort" 2>$null | Out-Null
+  $forwardStop = { if (Test-ForwardPresent) { $null = Invoke-AdbChecked -Arguments @("-s", $serial, "forward", "--remove", "tcp:$gadgetPort") } }.GetNewClosure()
+  $forwardVerify = { $present = Test-ForwardPresent; [pscustomobject]@{ Success = (-not $present); Detail = if ($present) { "$serial tcp:$gadgetPort" } else { 'absent' } } }.GetNewClosure()
+  $cleanup.Add((New-CollectorCleanupAction -Name "adb-forward:$gadgetPort" -Stop $forwardStop -Verify $forwardVerify))
   & $adb -s $serial forward "tcp:$gadgetPort" "tcp:$gadgetPort" | Out-Null
 
   Step "4. Bootstrap gadget (cold start game)"
+  $packageStop = { if (@(Get-PackagePids).Count -gt 0) { $null = Invoke-AdbChecked -Arguments @("-s", $serial, "shell", "am force-stop '$pkg'") } }.GetNewClosure()
+  $packageVerify = { $pids = @(Get-PackagePids); [pscustomobject]@{ Success = ($pids.Count -eq 0); Detail = if ($pids.Count) { "pid=$($pids -join ',')" } else { 'absent' } } }.GetNewClosure()
+  $cleanup.Add((New-CollectorCleanupAction -Name "package-process:$pkg" -Stop $packageStop -Verify $packageVerify))
   & $venvPy (Join-Path $scriptDir "cf_bootstrap_gadget.py") --device-id $serial --package $pkg --module libcocos2dlua.so --gadget-path $gadgetPath --timeout 180 | Out-Host
 
   Step "5. Start probe, wait READY"
@@ -154,7 +302,11 @@ try {
     "--instance", "$($config.instance)",
     "--adb-serial", "$serial"
   ) -RedirectStandardOutput $probeLog -RedirectStandardError $probeErr -PassThru -NoNewWindow
-  $cleanup.Add([pscustomobject]@{ Kind = "Process"; Id = $probe.Id })
+  $probePid = [int]$probe.Id
+  $probeStartTicks = [long]$probe.StartTime.ToUniversalTime().Ticks
+  $probeStop = { Stop-OwnedLocalProcess -ProcessId $probePid -StartTicks $probeStartTicks }.GetNewClosure()
+  $probeVerify = { Test-OwnedLocalProcessAbsent -ProcessId $probePid -StartTicks $probeStartTicks }.GetNewClosure()
+  $cleanup.Add((New-CollectorCleanupAction -Name "probe-process:$probePid" -Stop $probeStop -Verify $probeVerify))
   $ready = $false
   for ($i=0; $i -lt 60; $i++) {
     Start-Sleep -Seconds 2
@@ -186,20 +338,24 @@ try {
   Write-Host "`n---- summary ----" -ForegroundColor Cyan
   Get-Content (Join-Path $sessionDir "summary.json") -Raw
 } catch {
-  $runError = $_
-  throw
+  $runError = $_.Exception.Message
 } finally {
   Step "8. Forced cleanup"
-  $cleanupErrors = @(Invoke-CollectorCleanup -Items $cleanup -AdbPath $adb -DeviceSerial $serial -PackageName $pkg -CanForceStop $canForceStop)
-  if ($cleanupErrors.Count -eq 0) {
-    Ok "runtime cleanup complete"
+  $cleanupResult = Invoke-CollectorCleanup -Items $cleanup
+  $residualErrors = @(Test-CollectorResiduals -DeviceConfirmed $deviceConfirmed -ServerPath $serverRemotePath -AppGadgetPath $gadgetPath -AppConfigPath $configPath -ProbePid $probePid -ProbeStartTicks $probeStartTicks)
+  $allErrors = New-Object System.Collections.Generic.List[string]
+  if ($runError) { $allErrors.Add("run: $runError") }
+  foreach ($cleanupError in @($cleanupResult.Errors)) { $allErrors.Add("cleanup: $cleanupError") }
+  foreach ($residualError in $residualErrors) { $allErrors.Add("verify: $residualError") }
+
+  if ($allErrors.Count -eq 0) {
+    Ok "runtime cleanup complete; Probe/server/forward/Gadget/config/cf_* are absent"
   } else {
-    foreach ($cleanupError in $cleanupErrors) { Warn $cleanupError }
+    foreach ($errorText in $allErrors) { Warn $errorText }
+    $finalFailure = "collector lifecycle failed: $($allErrors -join ' | ')"
   }
   Warn "Collector cleanup did not change BlueStacks Root. User must disable Root, restart the research instance, and verify su -c id no longer returns uid=0."
-  if (($null -eq $runError) -and $cleanupErrors.Count -gt 0) {
-    throw "collector cleanup incomplete: $($cleanupErrors -join '; ')"
-  }
 }
 
+if ($finalFailure) { throw $finalFailure }
 Ok "done. data -> $sessionDir"

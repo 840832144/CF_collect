@@ -52,7 +52,7 @@ preflight → renamed frida-server → gadget staging → adb forward
 
 READY 只在 Probe 回传并通过 `hook-status` Gate 后成立：`onUIThreadReceiveMessage` 与 `lua_pcall` 必须同时列为已安装。仅启动 Probe、完成 `script.load()` 或收到其他 Frida 消息都不构成 READY。READY 后只由 User 按本次授权手动执行普通 Spin。脚本不会自动点击、Auto Spin、购买、充值或长时间挂机。
 
-不论运行成功、READY 失败或中途异常，`run_collector.ps1` 都从 `finally` 路径尝试清理 Gadget、server、forward、Probe 进程和临时文件，并显式报告失败项。此 cleanup 不改变 Root；Root 关闭、实例重启与失效验证仍由 User 完成。
+不论运行成功、READY 失败或中途异常，`run_collector.ps1` 都从 `finally` 路径按严格 LIFO 清理。Frida helper 返回 `pid / remote_path / started_by_run`；脚本只停止本轮拥有、PID 与 remote path 均精确匹配的 server，不使用宽泛 `pkill/killall`。cleanup 后回读验证 Probe、server、forward、Gadget/config 与 `/data/local/tmp/cf_*` 均无残留；停止失败、验证失败与残留会和运行错误聚合报告。此 cleanup 不改变 Root；Root 关闭、实例重启与失效验证仍由 User 完成。
 
 ## 5. 输出
 

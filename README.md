@@ -98,6 +98,7 @@ python collector/cf_summarize.py data/sessions/<id>/events.jsonl --output data/s
 ```powershell
 py -m compileall -q adapters collector tests
 py -m unittest discover -s tests -v
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/Test-Cleanup.ps1
 ```
 
 测试全部使用代码内合成 records，不依赖 `.local/`、真实 Session、fixture 或模拟器。
@@ -106,7 +107,8 @@ py -m unittest discover -s tests -v
 
 - Hook 只在 inbound dispatch thread/scope 内激活；无全局 Lua API 日志、Stalker 或 signer/encryptor/XXTEA 路线；
 - 不重打包 APK，不修改请求/返回/余额/奖励，不伪造或重放业务消息；
-- Gadget、server、forward、进程和临时文件由 `finally` 路径清理；Collector 只检测、不改变 BlueStacks Root；
+- Gadget、server、forward、进程和临时文件由 `finally` 路径按严格 LIFO 清理；Frida helper 返回 `pid / remote_path / started_by_run`，只停止本轮拥有且路径、PID 均精确匹配的 server 进程；
+- cleanup 后逐项验证 Probe、server、forward、Gadget/config 与 `/data/local/tmp/cf_*` 均无残留；停止、验证和残留错误会聚合报告，不静默吞掉；Collector 只检测、不改变 BlueStacks Root；
 - Session 后由 User 按 [Root 开关说明](docs/ROOT_TOGGLE.md) 手动关闭 Root、重启研究实例并验证 `su -c id` 不再返回 `uid=0`；
 - 若需要恢复新字段、扩大 schema、进入新协议层或修改 Android 9 路线，停止并另走 Review/Task；
 - `.local/`、`data/`、JSONL、APK、SO、日志和真实 Session 均不进入 Git。
