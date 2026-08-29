@@ -280,6 +280,30 @@ class DeploymentRegressionTests(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         self.assertIn("Cleanup injectable tests: PASS (7/7)", result.stdout)
 
+        shape_result = subprocess.run(
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(ROOT / "tests" / "Test-ProductionCollectionShapes.ps1"),
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(
+            0,
+            shape_result.returncode,
+            shape_result.stdout + shape_result.stderr,
+        )
+        self.assertIn(
+            "Production collection shape tests: PASS (10/10)",
+            shape_result.stdout,
+        )
+
         helper = (ROOT / "collector" / "cf_start_frida_server.ps1").read_text(
             encoding="utf-8"
         )
@@ -293,6 +317,8 @@ class DeploymentRegressionTests(unittest.TestCase):
         self.assertIn("file rollback", helper)
         self.assertNotIn("pkill", run.lower())
         self.assertNotIn("killall", run.lower())
+        self.assertNotRegex(run, r"return\s+,")
+        self.assertNotRegex(helper, r"return\s+,")
         self.assertNotRegex(helper, r"\$pid\b")
         self.assertNotRegex(run, r"\$pid\b")
         self.assertIn("Probe/server/forward/Gadget/config/cf_* are absent", run)

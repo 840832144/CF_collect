@@ -53,7 +53,7 @@ function Invoke-AdbChecked {
   if ($LASTEXITCODE -ne 0) {
     throw "adb exit=$LASTEXITCODE args=$($Arguments -join ' ') output=$($output -join ' ')"
   }
-  return ,$output
+  return $output
 }
 
 function Get-ExactRemoteServerPids {
@@ -69,7 +69,7 @@ function Get-ExactRemoteServerPids {
     $executable = ($cmdline -split '\s+', 2)[0]
     if ($executable -eq $RemotePath) { $pids.Add($processId) }
   }
-  return ,$pids.ToArray()
+  return $pids.ToArray()
 }
 
 function Get-ExistingRemotePaths {
@@ -79,13 +79,13 @@ function Get-ExistingRemotePaths {
     $output = @(Invoke-AdbChecked -Arguments @("-s", $serial, "shell", "if [ -e '$path' ]; then echo PRESENT; else echo ABSENT; fi"))
     if (($output -join " ").Trim() -eq "PRESENT") { $present.Add($path) }
   }
-  return ,$present.ToArray()
+  return $present.ToArray()
 }
 
 function Get-CfTempResidue {
   $command = 'for f in /data/local/tmp/cf_*; do [ -e "$f" ] && printf "%s\n" "$f"; done'
   $output = @(Invoke-AdbChecked -Arguments @("-s", $serial, "shell", $command))
-  return ,@($output | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ })
+  return @($output | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ })
 }
 
 function Test-ForwardPresent {
@@ -100,8 +100,8 @@ function Test-ForwardPresent {
 function Get-PackagePids {
   $output = @(Invoke-AdbChecked -Arguments @("-s", $serial, "shell", "pidof '$pkg' 2>/dev/null || true"))
   $text = ($output -join " ").Trim()
-  if (-not $text) { return ,@() }
-  return ,@($text -split '\s+' | Where-Object { $_ -match '^[0-9]+$' } | ForEach-Object { [int]$_ })
+  if (-not $text) { return @() }
+  return @($text -split '\s+' | Where-Object { $_ -match '^[0-9]+$' } | ForEach-Object { [int]$_ })
 }
 
 function Stop-ExactRemoteServer {
@@ -156,7 +156,7 @@ function Test-CollectorResiduals {
     $probeState = Test-OwnedLocalProcessAbsent -ProcessId $ProbePid.Value -StartTicks $ProbeStartTicks.Value
     if (-not $probeState.Success) { $errors.Add("Probe residual: $($probeState.Detail)") }
   }
-  if (-not $DeviceConfirmed) { return ,$errors.ToArray() }
+  if (-not $DeviceConfirmed) { return $errors.ToArray() }
 
   try {
     $serverPids = @(Get-ExactRemoteServerPids -RemotePath $ServerPath)
@@ -175,7 +175,7 @@ function Test-CollectorResiduals {
     $cfResidual = @(Get-CfTempResidue)
     if ($cfResidual.Count -gt 0) { $errors.Add("cf_* residual: $($cfResidual -join ',')") }
   } catch { $errors.Add("cf_* verify failed: $($_.Exception.Message)") }
-  return ,$errors.ToArray()
+  return $errors.ToArray()
 }
 
 $adb = Adb

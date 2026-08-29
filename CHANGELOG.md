@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.0.3 - 2026-08-29
+
+### Fixed
+
+- Cleanup 列表函数统一移除 `return` 前的一元逗号；调用方继续使用 `@()` 接收 0/1/N 项，避免 PID、ADB 行、路径与 residual error 形成嵌套数组。
+- 空 PID 不再被包装成 ownership residual，空 residual 集合不再生成空的 `verify:` 错误。
+
+### Tests
+
+- 新增对实际 `run_collector.ps1` 与 `cf_start_frida_server.ps1` 生产函数的 0/1/2 PID、ADB 行、路径及 residual-error shape 测试。
+
+### Boundaries
+
+- LIFO、精确 PID+path、READY、Root、Android 9 Hook/serializer 与 `batch_spin` 六字段保持不变；未启动模拟器、Frida、Collector 或执行 Spin。
+
 ## 1.0.2 - 2026-08-29
 
 ### Fixed

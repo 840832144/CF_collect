@@ -25,7 +25,7 @@ function Invoke-AdbChecked {
   if ($LASTEXITCODE -ne 0) {
     throw "adb exit=$LASTEXITCODE args=$($Arguments -join ' ') output=$($output -join ' ')"
   }
-  return ,$output
+  return $output
 }
 
 function Get-ExactRemoteServerPids {
@@ -40,7 +40,7 @@ function Get-ExactRemoteServerPids {
     $executable = ($cmdline -split '\s+', 2)[0]
     if ($executable -eq $RemotePath) { $pids.Add($processId) }
   }
-  return ,$pids.ToArray()
+  return $pids.ToArray()
 }
 
 function Test-RemoteFile {
@@ -54,7 +54,7 @@ function Get-ExistingServerFiles {
     $output = @(Invoke-AdbChecked -Arguments ($target + @("shell", "if [ -e '$path' ]; then echo PRESENT; else echo ABSENT; fi")))
     if (($output -join " ").Trim() -eq "PRESENT") { $present.Add($path) }
   }
-  return ,$present.ToArray()
+  return $present.ToArray()
 }
 
 function Stop-OwnedServerPids {
