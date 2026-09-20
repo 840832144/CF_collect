@@ -122,6 +122,57 @@ function User:sendABTestV2Feedback(name, type, params) ... bole.potp:send("abtes
    这很可能就是历史上 ARM64 Gadget 注入即崩 `gum-js-loop`/`GLThread SIGSEGV` 的根因）。
 3. **对齐版本**：本结论基于现网 4.80；早前的采集与 4.78 样本可作为版本差异对照。
 
+## 五之二、"暗改"证据与 A/B 实验清单（中文关键词扫描所得，**本轮最重要的发现**）
+
+对 4.80 做**中文关键词全量扫描**（`新手/保底/调控/概率/暗改/放水/送分/干预/平衡/中奖率/返奖`）后，
+在 `assets/src/Systems/BlazingChallenge/BlazingChallengeController.luac` **第 6216 行**命中一条
+**代码内的自白**：
+
+```lua
+function BlazingChallengeController:getComebackUserBoosterMul()
+    -- 暗改，显示的少，实际后端给的多
+    local ab_test = LobbyThemeControl:getInstance():getABTestByKey("abtest_comeback_theme_prize")
+    if ab_test then
+        -- return ab_test == 2 and 1 or 1.3 (只有实验组1和3，会多给)
+        return 1
+    end
+    return 1
+end
+```
+
+**三层判读（务必分开引用）**：
+
+1. **机制类别真实存在**：**召回/回归玩家（comeback）的奖励加成**，由服务端下发的 A/B key
+   `abtest_comeback_theme_prize` 驱动；配套 `comeback_user_bc_config_ts`（服务端下发配置时间戳）、
+   `isActivedComebackUserBooster()`、`getComebackBoosterLeftTime()`（BC 任务奖励中的 MP 星星额外加成）。
+2. **设计意图有白纸黑字**：注释明说"**显示的少，实际后端给的多**"，注释掉的实现是
+   `ab_test == 2 and 1 or 1.3`，并注明"只有实验组1和3，会多给" → 即**对照组显示 1×、
+   实验组后端实际给 1.3×**。
+3. **但现网 4.80 已停用**：两个分支都是 `return 1`，真实逻辑被注释 → **客户端不再隐藏**，
+   加成（若仍在生效）完全在服务端，**静态看不到**。
+
+> ⚠️ 这只是**召回玩家**的机制，**不是新手机制**；且它是"显示与实发不一致"，
+> 不是"按身份改中奖率"。引用时不要外推。
+
+### 客户端认识的 A/B key 全清单（`getABTestByKey` 字面量，25 个）
+
+与钱/奖励沾边的全部是 **UI/促销/活动展示**，且多处**已硬编码停用**：
+
+| A/B key | 实际作用 | 状态 |
+|---|---|---|
+| `abtest_bet_coins` | `checkShowCoinNode()`：大厅 loading 是否展示金币节点 | UI |
+| `abtest_bet_choice` | 注额选择 UI 变体（含 `id == 65662` 手动圈人） | UI |
+| `abtest_novice_task` | 注释 `【新手】【优化】新手任务逻辑&展示测试`、`11.14全开` | **新手任务逻辑与展示**，已全量放开（函数硬编码 `return true`）|
+| `abtest_ooc_show` | `isOOCTestUser()`：金币耗尽时展示哪个促销 | 变现展示 |
+| `abtest_bc_hunt_modify` | A/B 已注释，硬编码 `return true` | 停用 |
+| `abtest_welcome_back_login_bonus` / `abtest_welcome_bundle` / `abtest_welcome_unlock` | 回归/新手礼包与登录奖励展示 | 营销 |
+| `abtest_money_bank_day`(5x) / `abtest_fq_next_bc`(9x) / `abtest_lobby_footer_ad`(5x) / `abtest_speedy` / `abtest_bingo_game` / `abtest_drop_blast` / `abtest_theme_order` / `abtest_new_guide` / `abtest_limit_stamp` / `abtest_store_default_item` / `abtest_place_dark` / `abtest_policy_version` / `abtest_a_props_obtain` / `abtest_60075` / `abtest_theme_feature_activity_42019` / `abtest_independence_slots` | 功能入口/展示/活动开关 | 营销/UX |
+
+**中文关键词扫描的其余结果**：`保底` 4 处（**全部与队列/加载兜底有关**，与抽奖保底无关）、
+`概率` 12 处（多为文案；`ADSControl` 有一张 `{ratio=0.75,name="HugeWin",PR=0.6}` 的
+**弹窗展示概率**表 —— 决定何时弹 BigWin/HugeWin 动画，不是中奖概率）、
+`放水`/`送分`/`干预`/`中奖率`/`返奖`/`新手保护`/`扶持` **全部 0 命中**。
+
 ## 六、边界
 
 - 全流程**只读**：未修改游戏数值、未伪造/重放请求、未改服务器状态；未注入、未改包。
