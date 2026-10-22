@@ -1,0 +1,40 @@
+﻿10-22 17:00:46.600  7801  7815 W system_server: Failed to determine oat file name for dex location /data/app/slots.pcg.casino.games.free.android-GsF6zjJlCl9RqGbtZFEMZw==/base.apk: Dalvik cache directory does not exist
+10-22 17:00:46.766 11912 11994 D main    : cocos_android_app_init
+10-22 17:00:46.767 11912 11994 I Cocos2dxActivity: loadNativeLibraryAsync success
+10-22 17:00:46.771  1848  2541 W SurfaceFlinger: Attempting to set client state on removed layer: Splash Screen slots.pcg.casino.games.free.android#0
+10-22 17:00:46.771  1848  2541 W SurfaceFlinger: Attempting to destroy on removed layer: Splash Screen slots.pcg.casino.games.free.android#0
+10-22 17:00:46.776 11912 11912 I Cocos2dxActivity: afterLoadNativeLibs
+10-22 17:00:46.777 11912 11912 D Cocos2dxHelper: isSupportLowLatency:true
+10-22 17:00:46.786 11912 11912 D Cocos2dxHelper: sampleRate: 48000, framesPerBuffer: 1024
+10-22 17:00:46.787 11912 11912 D Java_org_cocos2dx_lib_Cocos2dxHelper.cpp: nativeSetAudioDeviceInfo: sampleRate: 48000, bufferSizeInFrames: 1024
+10-22 17:00:46.825 11912 11912 I Bole    : Cocos2dxActivity :init
+10-22 17:00:46.829 11912 11912 D Cocos2dxActivity: model=SM-G998B
+10-22 17:00:46.829 11912 11912 D Cocos2dxActivity: product=p3sxxx
+10-22 17:00:46.829 11912 11912 D Cocos2dxActivity: isEmulator=false
+10-22 17:00:46.857 11912 12035 D HostConnection: createUnique: call
+10-22 17:00:46.859 11912 12035 I AGA     : New SOCKET connection: slots.pcg.casino.games.free.android (pid 11912, tid 12035)
+10-22 17:00:46.863 11912 12035 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_EXT_copy_image GL_EXT_texture_buffer GL_OVR_multiview2 GL_OES_sample_shading GL_OES_shader_multisample_interpolation GL_OES_texture_stencil8 GL_EXT_texture_norm16 GL_OES_surfaceless_context GL_EXT_read_format_bgra GL_KHR_blend_equation_advanced GL_KHR_blend_equation_advanced_coherent GL_EXT_copy_image GL_EXT_texture_buffer GL_EXT_texture_buffer_half_float GL_OES_texture_storage_multisample_2d_array GL_OES_sample_variables GL_OES_shader_image_atomic GL_EXT_primitive_bounding_box GL_EXT_geometry_shader GL_EXT_geometry_point_size GL_EXT_tessellation_shader GL_EXT_tessellation_point_size GL_EXT_sha
+10-22 17:00:46.907 11912 12035 D Cocos2dxRenderer: onSurfaceCreated
+10-22 17:00:47.069 11912 12035 I chatty  : uid=10064(slots.pcg.casino.games.free.android) GLThread 306 identical 1 line
+10-22 17:00:47.194 11912 12035 D emuglGLESv2_enc: GL slots.pcg.casino.games.free.android ViewportNeedFlush 0
+10-22 17:00:47.357 11912 12035 D emuglGLESv2_enc: check TTCDisabled with pkg[slots.pcg.casino.games.free.android] with res[1]
+10-22 17:00:47.451 11912 12035 D Cocos2dxRenderer: onSurfaceChanged
+10-22 17:00:48.913 11912 11912 D Cocos2dxDownloader: onSuccess(i:200 headers:[Lcz.msebera.android.httpclient.Header;@a1793f8
+10-22 17:00:49.954 11356 11442 I Finsky  : [229] slots.pcg.casino.games.free.android: Account determined from installer data - [BdBd6M456-OzSgvvL6a7a7vjSefm7WuXOGgT0mLwDa8]
+10-22 17:00:49.958 11356 11442 I Finsky  : [229] Billing preferred account via installer for slots.pcg.casino.games.free.android: [BdBd6M456-OzSgvvL6a7a7vjSefm7WuXOGgT0mLwDa8]
+10-22 17:00:49.963 11356 11435 I Finsky  : [223] slots.pcg.casino.games.free.android: Account determined from installer data - [BdBd6M456-OzSgvvL6a7a7vjSefm7WuXOGgT0mLwDa8]
+10-22 17:00:49.963 11356 11435 I Finsky  : [223] Billing preferred account via installer for slots.pcg.casino.games.free.android: [BdBd6M456-OzSgvvL6a7a7vjSefm7WuXOGgT0mLwDa8]
+10-22 17:00:50.443 11912 12079 I AudioDecoderMp3: Original audio info: numChannels: 1, sampleRate: 48000, bitPerSample: 16, containerSize: 16, channelMask: 4, endianness: 2, numFrames: 97920, duration: 2.040000, total size: 195840
+10-22 17:00:50.444 11912 12079 D AudioDecoder: Decoding (assets/res/sounds/game3.mp3) to pcm data wasted 58.806999ms
+10-22 17:00:50.444 11912 12079 I AudioDecoder: No need to resample since the sample rate (48000) of the decoded pcm data is the same as the device output sample rate
+10-22 17:00:50.444 11912 12079 D AudioDecoder: Resampling (assets/res/sounds/game3.mp3) wasted 0.074000ms
+10-22 17:00:50.445 11912 12079 D AudioDecoder: Interleave (assets/res/sounds/game3.mp3) wasted 1.777000ms
+10-22 17:00:50.466 11912 12062 I AudioDecoderMp3: Original audio info: numChannels: 2, sampleRate: 44100, bitPerSample: 16, containerSize: 16, channelMask: 3, endianness: 2, numFrames: 188928, duration: 4.284081, total size: 755712
+10-22 17:00:50.466 11912 12062 D AudioDecoder: Decoding (assets/res/sounds/09_game_loading.mp3) to pcm data wasted 82.252998ms
+10-22 17:00:50.490 11912 12062 D AudioDecoder: Resampling (assets/res/sounds/09_game_loading.mp3) wasted 23.735001ms
+10-22 17:00:50.490 11912 12062 I AudioDecoder: Audio channel count is 2, no need to interleave
+10-22 17:00:50.490 11912 12062 D AudioDecoder: Interleave (assets/res/sounds/09_game_loading.mp3) wasted 0.104000ms
+10-22 17:00:51.425 11912 12035 D cocos2d : android SDK version:28
+10-22 17:00:51.997 11912 12087 D ProfileInstaller: Skipping profile installation for slots.pcg.casino.games.free.android
+10-22 17:02:15.873 12127 12127 D HostConnection: createUnique: call
+10-22 17:02:15.876 12127 12127 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_EXT_copy_image GL_EXT_texture_buffer GL_OVR_multiview2 GL_OES_sample_shading GL_OES_shader_multisample_interpolation GL_OES_texture_stencil8 GL_EXT_texture_norm16 GL_OES_surfaceless_context GL_EXT_read_format_bgra GL_KHR_blend_equation_advanced GL_KHR_blend_equation_advanced_coherent GL_EXT_copy_image GL_EXT_texture_buffer GL_EXT_texture_buffer_half_float GL_OES_texture_storage_multisample_2d_array GL_OES_sample_variables GL_OES_shader_image_atomic GL_EXT_primitive_bounding_box GL_EXT_geometry_shader GL_EXT_geometry_point_size GL_EXT_tessellation_shader GL_EXT_tessellation_point_size GL_EXT_sha
